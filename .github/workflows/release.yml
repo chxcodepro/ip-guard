@@ -1,0 +1,47 @@
+name: Build Windows release
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.event.release.tag_name }}
+  cancel-in-progress: false
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.release.tag_name }}
+          persist-credentials: false
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 12.15.0
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24.22.1
+          cache: pnpm
+      - name: Verify release version
+        shell: pwsh
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          $package = Get-Content apps/desktop/package.json -Raw | ConvertFrom-Json
+          if ($env:RELEASE_TAG -ne "v$($package.version)") { throw 'Release tag must match apps/desktop/package.json' }
+      - run: pnpm install --frozen-lockfile
+      - name: Build installer and update metadata
+        run: pnpm exec vp run package:desktop
+      - name: Attach release files
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          $assets = Get-ChildItem apps/desktop/release -File | Where-Object { $_.Name -match '^IP-Guard-Setup-.+\.exe(\.blockmap)?$|^latest\.yml$' }
+          if (-not ($assets.Name -contains 'latest.yml')) { throw 'Missing auto-update metadata' }
+          gh release upload $env:RELEASE_TAG @($assets.FullName) --repo $env:GITHUB_REPOSITORY

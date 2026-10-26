@@ -1,0 +1,20 @@
+{
+  "$schema": "https://vibestart.net/schema.json",
+
+  "name": "ip-guard",
+  "version": "0.1.1",
+
+  "stack": {
+    "toolchain": "vite-plus",
+    "frontend": "react",
+    "framework": "spa",
+    "router": "tanstack-router",
+    "ui": "shadcn",
+    "desktop": "electron",
+    "testing": "playwright",
+  },
+
+  "addons": [],
+
+  "channel": "recommended",
+}

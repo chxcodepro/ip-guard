@@ -1,0 +1,33 @@
+{
+  "name": "ip-guard",
+  "version": "0.7.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "version:app": "node scripts/set-version.mjs",
+    "dev": "vp run -r --parallel dev",
+    "build": "vp run -r build",
+    "ready": "vp check && vp test && vp run test:e2e && vp run -r build",
+    "prepare": "vp config",
+    "package:desktop": "vp run --filter @ip-guard/desktop package",
+    "test:e2e": "vp run --filter @ip-guard/web test:e2e"
+  },
+  "devDependencies": {
+    "@ip-guard/config": "workspace:*",
+    "@types/node": "catalog:",
+    "typescript": "catalog:",
+    "vite": "catalog:",
+    "vite-plus": "catalog:"
+  },
+  "devEngines": {
+    "packageManager": {
+      "name": "pnpm",
+      "version": "12.15.0",
+      "onFail": "warn"
+    }
+  },
+  "engines": {
+    "node": "24.22.1",
+    "pnpm": "12.15.0"
+  }
+}

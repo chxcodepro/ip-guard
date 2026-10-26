@@ -1,0 +1,4 @@
+{
+  "extends": "@ip-guard/config/typescript/react.json",
+  "include": ["src"]
+}

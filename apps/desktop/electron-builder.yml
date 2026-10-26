@@ -1,0 +1,31 @@
+appId: com.ip-guard.desktop
+productName: IP Guard
+asar: true
+npmRebuild: false
+directories:
+  output: release
+files:
+  - dist/main/**/*
+  - dist/preload/**/*
+  - dist/renderer/**/*
+extraResources:
+  - from: dist/native/${version}
+    to: native/${version}
+  - from: assets
+    to: assets
+  - from: dist/recover.cmd
+    to: recover.cmd
+  - from: dist/release-info.json
+    to: release-info.json
+win:
+  icon: assets/icon.ico
+  requestedExecutionLevel: asInvoker
+  target:
+    - target: nsis
+      arch: [x64]
+nsis:
+  oneClick: false
+  perMachine: true
+  allowToChangeInstallationDirectory: true
+  include: scripts/installer.nsh
+  artifactName: IP-Guard-Setup-${version}.${ext}

@@ -1,0 +1,4 @@
+{
+  "extends": "@ip-guard/config/typescript/node.json",
+  "include": ["src", "scripts", "vite.main.config.ts", "vite.preload.config.ts"]
+}

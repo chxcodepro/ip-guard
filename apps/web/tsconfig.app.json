@@ -1,0 +1,7 @@
+{
+  "extends": "@ip-guard/config/typescript/react.json",
+  "compilerOptions": {
+    "tsBuildInfoFile": "./node_modules/.tmp/tsconfig.app.tsbuildinfo"
+  },
+  "include": ["src"]
+}
