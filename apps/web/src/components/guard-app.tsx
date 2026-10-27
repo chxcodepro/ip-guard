@@ -5,6 +5,8 @@ import {
   ChevronRight,
   FileClock,
   FolderOpen,
+  Eye,
+  EyeOff,
   LayoutDashboard,
   LoaderCircle,
   Lock,
@@ -41,7 +43,12 @@ import type {
   Settings,
   Snapshot,
 } from "@ip-guard/electron";
-import { claudeIpv4Endpoint, nativeVersion, settingsSchema } from "@ip-guard/electron";
+import {
+  claudeIpv4Endpoint,
+  formatIPText,
+  nativeVersion,
+  settingsSchema,
+} from "@ip-guard/electron";
 
 import { BrowserExtensionPanel } from "#src/components/browser-extension-panel.tsx";
 import { ClaudeControl } from "#src/components/claude-control.tsx";
@@ -154,6 +161,7 @@ function ThemeControl() {
   );
 }
 function RuleForm({
+  ipsVisible,
   settings,
   locked,
   busy,
@@ -162,6 +170,7 @@ function RuleForm({
   onUnlock,
   onFetch,
 }: {
+  ipsVisible: boolean;
   settings: Settings;
   locked: boolean;
   busy: boolean;
@@ -205,14 +214,17 @@ function RuleForm({
         <div className="ipv4-fill-row">
           <input
             id="expected-ip"
+            type="text"
             autoComplete="off"
             spellCheck={false}
             inputMode="decimal"
             className="mono"
-            readOnly={locked || busy || fetching}
-            placeholder="填写你的固定公网 IPv4"
-            value={draft.expectedIp}
-            onChange={(e) => setDraft({ ...draft, expectedIp: e.target.value.trim() })}
+            readOnly={locked || busy || fetching || !ipsVisible}
+            placeholder={ipsVisible ? "填写你的固定公网 IPv4" : "显示 IP 后可手动填写"}
+            value={formatIPText(draft.expectedIp, ipsVisible)}
+            onChange={(e) => {
+              if (ipsVisible) setDraft({ ...draft, expectedIp: e.target.value.trim() });
+            }}
             required
           />
           <button
@@ -248,7 +260,7 @@ function RuleForm({
       </div>
       {error && (
         <div role="alert" className="form-error">
-          {error}
+          {formatIPText(error, ipsVisible)}
         </div>
       )}
       <div className="form-footer">
@@ -471,6 +483,14 @@ function AddDialog({
 }
 
 export function GuardApp() {
+  const [ipsVisible, setIpsVisible] = useState(false);
+  useEffect(() => {
+    const conceal = () => {
+      if (document.hidden) setIpsVisible(false);
+    };
+    document.addEventListener("visibilitychange", conceal);
+    return () => document.removeEventListener("visibilitychange", conceal);
+  }, []);
   const [snapshot, setSnapshot] = useState<Snapshot>(initial);
   const [page, setPage] = useState<Page>("overview");
   const [busy, setBusy] = useState(false);
@@ -552,7 +572,7 @@ export function GuardApp() {
       }
       return reply;
     } catch (error) {
-      toast.error(errorText(error, "操作失败"));
+      toast.error(formatIPText(errorText(error, "操作失败")));
       return undefined;
     } finally {
       setBusy(false);
@@ -577,7 +597,7 @@ export function GuardApp() {
     const result = await invoke({ action: "lock", settings });
     if (result?.snapshot) {
       if (result.snapshot.ready) toast.success("公网 IPv4 已锁定，校验通过");
-      else toast.warning(`IP 已锁定 · ${result.snapshot.reason || "等待校验"}`);
+      else toast.warning(formatIPText(`IP 已锁定 · ${result.snapshot.reason || "等待校验"}`));
     }
   };
   const unlock = async () => {
@@ -734,7 +754,7 @@ export function GuardApp() {
             <time title={new Date(entry.time).toLocaleString()} className="mono">
               {time(entry.time)}
             </time>
-            <span>{entry.message}</span>
+            <span>{formatIPText(entry.message, ipsVisible)}</span>
           </div>
         ))}
       </div>
@@ -794,6 +814,17 @@ export function GuardApp() {
           </div>
           <div className="topbar-actions">
             <ClaudeControl />
+            <button
+              type="button"
+              className="btn ip-visibility"
+              aria-label={ipsVisible ? "隐藏 IP 地址" : "显示 IP 地址"}
+              title={ipsVisible ? "隐藏 IP 地址" : "显示 IP 地址"}
+              aria-pressed={ipsVisible}
+              onClick={() => setIpsVisible((value) => !value)}
+            >
+              {ipsVisible ? <EyeOff size={16} /> : <Eye size={16} />}
+              {ipsVisible ? "隐藏 IP" : "显示 IP"}
+            </button>
             <ThemeControl />
           </div>
         </header>
@@ -814,11 +845,14 @@ export function GuardApp() {
             <div className="notice" role="alert">
               <ShieldOff size={18} />
               <span>
-                {failure ||
-                  (offline ? snapshot.reason || "守护程序离线，请重启 IP Guard。" : "") ||
-                  (!bridge
-                    ? "请打开 Windows 桌面版以配置启动拦截与后台防护。"
-                    : "管理启动拦截与防火墙需要管理员权限。")}
+                {formatIPText(
+                  failure ||
+                    (offline ? snapshot.reason || "守护程序离线，请重启 IP Guard。" : "") ||
+                    (!bridge
+                      ? "请打开 Windows 桌面版以配置启动拦截与后台防护。"
+                      : "管理启动拦截与防火墙需要管理员权限。"),
+                  ipsVisible,
+                )}
               </span>
               {bridge && offline ? (
                 <button
@@ -845,7 +879,7 @@ export function GuardApp() {
             </div>
           )}
           <div key={page} className="page-content">
-            {page === "coffee" && <CoffeePage />}
+            {page === "coffee" && <CoffeePage ipsVisible={ipsVisible} />}
             {page === "overview" && (
               <>
                 <section className={`network-panel ${snapshot.ready ? "matched" : ""}`}>
@@ -866,17 +900,21 @@ export function GuardApp() {
                         <RefreshCw size={15} className={busy || snapshot.checking ? "spin" : ""} />
                       </button>
                     </div>
-                    <div className="public-ip mono">{snapshot.currentIp || "— . — . — . —"}</div>
+                    <div className="public-ip mono">
+                      {formatIPText(snapshot.currentIp || "— . — . — . —", ipsVisible)}
+                    </div>
                     <div className="allowed-ip">
                       <span>允许地址</span>
-                      <span className="mono">{snapshot.settings.expectedIp || "尚未设置"}</span>
+                      <span className="mono">
+                        {formatIPText(snapshot.settings.expectedIp || "尚未设置", ipsVisible)}
+                      </span>
                       {snapshot.ready && <Check size={14} />}
                     </div>
                   </div>
                   <div className="network-aside">
                     <div className="network-detail">
                       <Wifi size={15} />
-                      <span>{snapshot.adapter || "等待网络检测"}</span>
+                      <span>{formatIPText(snapshot.adapter || "等待网络检测", ipsVisible)}</span>
                     </div>
                     <div
                       className={`network-detail adapter-monitor ${snapshot.watchedAdapter.exists && snapshot.watchedAdapter.up ? "online" : "warning"}`}
@@ -904,8 +942,8 @@ export function GuardApp() {
                   </div>
                   <div className={`network-ipv6 ${ipv6?.status ?? "unknown"}`}>
                     <span>公网 IPv6</span>
-                    <strong className="mono" title={ipv6?.detail}>
-                      {ipv6?.value ?? "等待检测"}
+                    <strong className="mono" title={formatIPText(ipv6?.detail ?? "", ipsVisible)}>
+                      {formatIPText(ipv6?.value ?? "等待检测", ipsVisible)}
                     </strong>
                     <button type="button" className="text-btn" onClick={() => setPage("coffee")}>
                       检测详情
@@ -919,7 +957,10 @@ export function GuardApp() {
                         ? "正在连接本机守护程序…"
                         : !locked
                           ? "锁定允许地址后开始校验"
-                          : snapshot.reason || "地址匹配 · 启动时仍会重新校验"}
+                          : formatIPText(
+                              snapshot.reason || "地址匹配 · 启动时仍会重新校验",
+                              ipsVisible,
+                            )}
                     </span>
                     <button className="text-btn" onClick={() => setPage("settings")}>
                       编辑规则
@@ -927,7 +968,9 @@ export function GuardApp() {
                     </button>
                   </div>
                   {snapshot.detection && (
-                    <div className="network-observation">最近网络事件 · {snapshot.detection}</div>
+                    <div className="network-observation">
+                      最近网络事件 · {formatIPText(snapshot.detection, ipsVisible)}
+                    </div>
                   )}
                 </section>
                 {!locked && (
@@ -936,6 +979,7 @@ export function GuardApp() {
                       <h2>设置你的允许地址</h2>
                     </div>
                     <RuleForm
+                      ipsVisible={ipsVisible}
                       settings={snapshot.settings}
                       locked={locked}
                       busy={busy}
@@ -986,6 +1030,7 @@ export function GuardApp() {
                     <span className="subtle-label">公网 IPv4</span>
                   </div>
                   <RuleForm
+                    ipsVisible={ipsVisible}
                     settings={snapshot.settings}
                     locked={locked}
                     busy={busy}

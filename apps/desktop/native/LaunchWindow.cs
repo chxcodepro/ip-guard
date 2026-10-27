@@ -5,6 +5,9 @@ using System.Drawing;
 using System.Drawing.Drawing2D;
 using System.Drawing.Text;
 using System.Runtime.InteropServices;
+using System.Net;
+using System.Net.Sockets;
+using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 using System.Windows.Forms;
 using Microsoft.Win32;
@@ -25,7 +28,9 @@ namespace IpGuard {
         readonly Color ink,muted,line,surface,soft,green,greenSoft,red,amber;
         readonly bool motion;
         readonly float scale;
-        readonly Button ackButton,firewallButton,closeButton;
+        readonly Button ackButton,firewallButton,closeButton,ipButton;
+        bool ipsVisible;
+        string description="";
         string name, currentIp="", expectedIp="", reason="", phase="running";
         double completed=-1;
         bool finishing;
@@ -60,6 +65,9 @@ namespace IpGuard {
                 try { SystemPolicy.OpenFirewall(); } catch(Exception error) { reason="打开失败 · "+error.GetBaseException().Message+"；Win+R 输入 wf.msc"; } Invalidate();
             };
             closeButton=CreateButton("×",new RectangleF(635,19,26,26),surface,muted); closeButton.AccessibleName="关闭启动校验"; closeButton.Click+=(sender,args)=>Close();
+            ipButton=CreateButton("显示 IP",new RectangleF(535,21,86,27),surface,muted); ipButton.AccessibleName="显示 IP 地址";
+            ipButton.Click+=(sender,args)=>{ipsVisible=!ipsVisible; ipButton.Text=ipsVisible ? "隐藏 IP" : "显示 IP"; ipButton.AccessibleName=ipsVisible ? "隐藏 IP 地址" : "显示 IP 地址"; AccessibleDescription=Display(description); Invalidate();};
+            VisibleChanged+=(sender,args)=>{if(!Visible) {ipsVisible=false; ipButton.Text="显示 IP"; ipButton.AccessibleName="显示 IP 地址"; AccessibleDescription=Display(description);}};
             AcceptButton=ackButton; AccessibleName="IP Guard 启动校验";
             timer.Tick+=(sender,args)=>TickScene(); Shown+=(sender,args)=>{clock.Restart(); timer.Start();};
         }
@@ -72,7 +80,18 @@ namespace IpGuard {
         }
         protected override CreateParams CreateParams { get { CreateParams p=base.CreateParams; p.ClassStyle|=0x20000; p.ExStyle|=0x80; return p; } }
         void Post(Action action) { if(IsDisposed || !IsHandleCreated) return; try { BeginInvoke(action); } catch(InvalidOperationException) { } }
-        public void Context(string appName,string expected) { Post(()=>{name=appName; expectedIp=expected ?? ""; AccessibleDescription=name+"，锁定 IP："+expectedIp; Invalidate();}); }
+        string Display(string value) {
+            if(ipsVisible) return value ?? "";
+            string hidden=Regex.Replace(value ?? "",@"[0-9a-fA-F:.]*:[0-9a-fA-F:.]+",match=>{
+                IPAddress address; if(IPAddress.TryParse(match.Value,out address) && address.AddressFamily==AddressFamily.InterNetworkV6) return MaskV6(match.Value);
+                if(match.Value.StartsWith(":") && IPAddress.TryParse(match.Value.Substring(1),out address) && address.AddressFamily==AddressFamily.InterNetworkV6) return ":"+MaskV6(match.Value.Substring(1));
+                return match.Value;
+            });
+            return Regex.Replace(hidden,@"\b(?:\d{1,3}\.){3}\d{1,3}\b",match=>{IPAddress address; if(!IPAddress.TryParse(match.Value,out address) || address.AddressFamily!=AddressFamily.InterNetwork) return match.Value; string[] parts=match.Value.Split('.');return parts[0]+"."+parts[1]+".•••.•••";});
+        }
+        static string MaskV6(string value) {string[] parts=value.Split(':');return parts[0]+":"+parts[1]+":••••:••••";}
+        void Describe(string value) { description=value; AccessibleDescription=Display(value); }
+        public void Context(string appName,string expected) { Post(()=>{name=appName; expectedIp=expected ?? ""; Describe(name+"，锁定 IP："+expectedIp); Invalidate();}); }
         public void Progress(ProbeProgress item) {
             Post(()=>{
                 if(phase!="running") return;
@@ -80,16 +99,16 @@ namespace IpGuard {
                 if(step==null) { step=new Step { id=item.step, appeared=steps.Count==0 ? clock.Elapsed.TotalMilliseconds : Math.Max(clock.Elapsed.TotalMilliseconds,steps[steps.Count-1].appeared+(motion ? 85 : 0)) }; steps.Add(step); }
                 step.label=item.label; step.status=item.status; step.detail=item.detail;
                 if(item.step=="ipv4" && item.status=="ok") currentIp=item.detail;
-                AccessibleDescription=name+"，"+item.label+"："+item.detail;
+                Describe(name+"，"+item.label+"："+item.detail);
                 Invalidate();
             });
         }
-        public void Success(string ip,string expected) { Post(()=>{currentIp=ip; expectedIp=expected; phase="complete"; AccessibleDescription="校验通过，公网 IP："+ip; completed=clock.Elapsed.TotalMilliseconds; Invalidate();}); }
+        public void Success(string ip,string expected) { Post(()=>{currentIp=ip; expectedIp=expected; phase="complete"; Describe("校验通过，公网 IP："+ip); completed=clock.Elapsed.TotalMilliseconds; Invalidate();}); }
         public void Block(string message,string ip,string expected,bool firewall) {
             Post(()=>{
                 if(cancelled) return;
                 currentIp=ip ?? currentIp; expectedIp=expected ?? expectedIp; reason=message; phase="blocked"; completed=clock.Elapsed.TotalMilliseconds;
-                AccessibleDescription="启动已阻断，"+reason+"，当前 IP："+currentIp+"，锁定 IP："+expectedIp;
+                Describe("启动已阻断，"+reason+"，当前 IP："+currentIp+"，锁定 IP："+expectedIp);
                 foreach(Step step in steps) if(step.status=="running") step.status="error";
                 timer.Start(); Opacity=1; ackButton.Visible=true; firewallButton.Visible=firewall;
                 if(!Visible) Show(); Activate(); ackButton.Focus(); Invalidate();
@@ -127,7 +146,7 @@ namespace IpGuard {
         static GraphicsPath Round(RectangleF r,float radius) { GraphicsPath p=new GraphicsPath(); float d=radius*2; p.AddArc(r.X,r.Y,d,d,180,90); p.AddArc(r.Right-d,r.Y,d,d,270,90); p.AddArc(r.Right-d,r.Bottom-d,d,d,0,90); p.AddArc(r.X,r.Bottom-d,d,d,90,90); p.CloseFigure(); return p; }
         void Fill(Graphics g,Color color,RectangleF rect,float radius) { using(Brush b=new SolidBrush(color)) using(GraphicsPath p=Round(rect,radius)) g.FillPath(b,p); }
         void Label(Graphics g,string value,Font font,Color color,RectangleF rect,StringAlignment alignment=StringAlignment.Near) {
-            using(Brush brush=new SolidBrush(color)) using(StringFormat format=new StringFormat { Alignment=alignment, LineAlignment=StringAlignment.Center, Trimming=StringTrimming.EllipsisCharacter, FormatFlags=font==smallFont && rect.Height>30 ? 0 : StringFormatFlags.NoWrap }) g.DrawString(value ?? "",font,brush,rect,format);
+            using(Brush brush=new SolidBrush(color)) using(StringFormat format=new StringFormat { Alignment=alignment, LineAlignment=StringAlignment.Center, Trimming=StringTrimming.EllipsisCharacter, FormatFlags=font==smallFont && rect.Height>30 ? 0 : StringFormatFlags.NoWrap }) g.DrawString(Display(value),font,brush,rect,format);
         }
         void Checkmark(Graphics g,PointF center,float amount,Color color,float size=1) {
             PointF a=new PointF(center.X-10*size,center.Y), b=new PointF(center.X-3*size,center.Y+7*size), c=new PointF(center.X+12*size,center.Y-9*size);
@@ -141,7 +160,7 @@ namespace IpGuard {
             using(Pen border=new Pen(line,1)) using(GraphicsPath edge=Round(new RectangleF(0.5f,0.5f,679,437),18)) g.DrawPath(border,edge);
             Fill(g,greenSoft,new RectangleF(24,22,27,27),8); Checkmark(g,new PointF(37,35),1,green,0.45f);
             Label(g,"IP GUARD",brandFont,ink,new RectangleF(60,22,110,27));
-            Label(g,name,textFont,muted,new RectangleF(180,22,430,27));
+            Label(g,name,textFont,muted,new RectangleF(180,22,340,27));
             using(Pen separator=new Pen(line,1)) { g.DrawLine(separator,24,68,656,68); g.DrawLine(separator,224,92,224,340); }
             Label(g,"启动校验",textFont,muted,new RectangleF(27,86,170,24));
             for(int i=0;i<steps.Count && i<6;i++) {

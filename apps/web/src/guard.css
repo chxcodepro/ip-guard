@@ -1015,6 +1015,10 @@ input::placeholder {
 .spin {
   animation: guard-spin 900ms linear infinite;
 }
+.ip-visibility {
+  white-space: nowrap;
+  flex-shrink: 0;
+}
 @keyframes guard-spin {
   to {
     transform: rotate(360deg);

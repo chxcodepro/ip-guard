@@ -2,7 +2,7 @@ import { CircleX, LoaderCircle, RefreshCw, TriangleAlert } from "lucide-react";
 import { useEffect, useState } from "react";
 
 import type { CoffeeMetric, CoffeeReport } from "@ip-guard/electron";
-import { ipv4Schema, ipv6Schema } from "@ip-guard/electron";
+import { formatIPText, ipv4Schema, ipv6Schema } from "@ip-guard/electron";
 
 const initial: CoffeeReport = {
   phase: "idle",
@@ -175,15 +175,15 @@ function loadHistory(): HistoryEntry[] {
     return [];
   }
 }
-function MetricRows({ items }: { items: CoffeeMetric[] }) {
+function MetricRows({ items, ipsVisible }: { items: CoffeeMetric[]; ipsVisible: boolean }) {
   return (
     <div className="coffee-metrics">
       {items.map((item) => (
         <div className={`coffee-metric ${item.status}`} key={item.id}>
-          <span className="coffee-label">{item.label}</span>
+          <span className="coffee-label">{formatIPText(item.label, ipsVisible)}</span>
           <div>
             <div className="coffee-value">
-              <strong>{item.value}</strong>
+              <strong>{formatIPText(item.value, ipsVisible)}</strong>
               {(item.status === "warning" || item.status === "error") && (
                 <span className={`coffee-risk-marker ${item.status}`}>
                   {item.status === "warning" ? <TriangleAlert size={13} /> : <CircleX size={13} />}
@@ -191,7 +191,7 @@ function MetricRows({ items }: { items: CoffeeMetric[] }) {
                 </span>
               )}
             </div>
-            {item.detail && <small>{item.detail}</small>}
+            {item.detail && <small>{formatIPText(item.detail, ipsVisible)}</small>}
           </div>
         </div>
       ))}
@@ -199,7 +199,7 @@ function MetricRows({ items }: { items: CoffeeMetric[] }) {
   );
 }
 
-export function CoffeePage() {
+export function CoffeePage({ ipsVisible }: { ipsVisible: boolean }) {
   const bridge = window.desktop;
   const [report, setReport] = useState(initial);
   const [error, setError] = useState("");
@@ -327,7 +327,7 @@ export function CoffeePage() {
           <h2>{group.title}</h2>
           {group.id === "trust" && <span className="subtle-label">NET.COFFEE</span>}
         </div>
-        <MetricRows items={group.items} />
+        <MetricRows items={group.items} ipsVisible={ipsVisible} />
       </section>
     ) : null;
   };
@@ -381,7 +381,7 @@ export function CoffeePage() {
       </div>
       {(error || report.error) && (
         <div className="notice" role="alert">
-          {error || report.error}
+          {formatIPText(error || report.error, ipsVisible)}
         </div>
       )}
       {!report.groups.length && (
@@ -407,14 +407,14 @@ export function CoffeePage() {
               <h2>WebRTC / UDP</h2>
               {udp.phase === "running" && <LoaderCircle size={14} className="spin" />}
             </div>
-            <MetricRows items={udpItems} />
+            <MetricRows items={udpItems} ipsVisible={ipsVisible} />
           </section>
         </div>
         <section className="panel coffee-device">
           <div className="panel-heading">
             <h2>本机设备</h2>
           </div>
-          <MetricRows items={[timezone, ...device]} />
+          <MetricRows items={[timezone, ...device]} ipsVisible={true} />
         </section>
         <section className="panel coffee-history">
           <div className="panel-heading">
@@ -440,7 +440,7 @@ export function CoffeePage() {
               {history.map((entry, index) => (
                 <div key={`${entry.time}-${index}`}>
                   <time>{new Date(entry.time).toLocaleString("zh-CN", { hour12: false })}</time>
-                  <strong className="mono">{entry.ip}</strong>
+                  <strong className="mono">{formatIPText(entry.ip, ipsVisible)}</strong>
                 </div>
               ))}
             </div>

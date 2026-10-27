@@ -55,6 +55,17 @@ header {
   align-items: center;
   justify-content: space-between;
 }
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.header-actions button {
+  display: grid;
+  place-items: center;
+  min-width: 32px;
+  min-height: 32px;
+}
 .brand {
   font-size: 17px;
   font-weight: 700;

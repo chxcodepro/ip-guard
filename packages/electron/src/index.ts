@@ -1,6 +1,7 @@
 import { z } from "zod";
+export { formatIPText } from "./ip-display.ts";
 
-export const nativeVersion = "0.9.1";
+export const nativeVersion = "0.9.2";
 export const nativeProtocol = 6;
 export const browserExtensionId = "blmgamidelconfabgilaacbkokomegep";
 export const browserHostName = "com.ipguard.browser";
