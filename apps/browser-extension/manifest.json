@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "IP Guard · Claude 防护",
-  "version": "0.9.0",
+  "version": "0.9.1",
   "description": "按 IP Guard 锁定的 Claude AI 出口 IPv4 保护 Claude 网页。",
   "minimum_chrome_version": "120",
   "icons": { "32": "icon.png" },

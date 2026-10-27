@@ -260,6 +260,23 @@ namespace IpGuard {
             }
         }
         static void Background(Action action) { Thread thread = new Thread(() => action()); thread.IsBackground = true; thread.Start(); }
+        bool CanInherit(NamedPipeServerStream pipe,string appId) {
+            uint pid;
+            Win32.Check(Win32.GetNamedPipeClientProcessId(pipe.SafePipeHandle,out pid),"无法核对启动来源");
+            IntPtr process=Win32.OpenProcess(0x1000,false,pid);
+            if(process==IntPtr.Zero) return false;
+            try {
+                lock(state) {
+                    if(!healthy || !config.rulesLocked || lastVerified==0 || Stopwatch.GetTimestamp()-lastVerified>Stopwatch.Frequency*(config.settings.intervalSeconds+8)) return false;
+                    foreach(Session session in sessions.Where(s=>s.appId==appId && !s.stopped && s.epoch==epoch)) {
+                        bool inside;
+                        Win32.Check(Win32.IsProcessInJob(process,session.job,out inside),"无法核对受保护进程树");
+                        if(inside) return true;
+                    }
+                    return false;
+                }
+            } finally { Win32.CloseHandle(process); }
+        }
         void GateSession(NamedPipeServerStream pipe) {
             Session session = null; Target target = null;
             try {
@@ -270,6 +287,11 @@ namespace IpGuard {
                     string line = read.Result;
                     if(line == null || line.Length > 8192) throw new Exception("启动请求无效。");
                     var request = Data.Json().Deserialize<Dictionary<string,object>>(line);
+                    if(request.ContainsKey("action") && request["action"] as string=="scope") {
+                        writer.WriteLine(Data.Json().Serialize(new { inherit=CanInherit(pipe,request["id"] as string) }));
+                        return;
+                    }
+                    bool inherited=request.ContainsKey("inherit") && request["inherit"] is bool && (bool)request["inherit"];
                     lock(actions) {
                         target = Find(request["id"] as string);
                         if(!target.enabled || !String.Equals(target.path,request["path"] as string,StringComparison.OrdinalIgnoreCase)) throw new Exception("该程序未启用启动防护。");
@@ -289,7 +311,9 @@ namespace IpGuard {
                         progress(new ProbeProgress("security","系统防护","running","检查防火墙与 IP 锁定"));
                         SystemPolicy.FirewallHealthy();
                         progress(new ProbeProgress("security","系统防护","ok","锁定与防火墙已就绪"));
-                        if(!Check(progress)) throw new Exception(reason);
+                        if(inherited) {
+                            if(!CanInherit(pipe,target.id)) throw new Exception("原启动许可已失效，子进程启动已阻断。");
+                        } else if(!Check(progress)) throw new Exception(reason);
                         if(disconnected) throw new IOException("启动校验窗口已关闭。");
                         string name = "Local\\IPGuard-" + Guid.NewGuid().ToString("D");
                         lock(state) {
@@ -303,7 +327,7 @@ namespace IpGuard {
                         SystemPolicy.Block(target,false);
                         lock(state) { if(session.stopped || session.epoch != epoch || !healthy) throw new Exception("启动许可已撤销。"); writer.WriteLine("run"); }
                     }
-                    Log("info", target.name + " · 校验通过，已启动"); Publish();
+                    if(!inherited) Log("info", target.name + " · 校验通过，已启动"); Publish();
                     Task<string> alive = Task.Run(() => reader.ReadLine());
                     while(!quit && !session.stopped && !alive.IsCompleted) {
                         bool stale;

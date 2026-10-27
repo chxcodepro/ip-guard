@@ -14,6 +14,7 @@ namespace IpGuard {
         public string type,name,expectedIp,currentIp,job,error,code;
         public ProbeProgress data;
         public bool? allow;
+        public bool inherit;
     }
     public static class LaunchGate {
         sealed class Lease : IDisposable {
@@ -43,17 +44,39 @@ namespace IpGuard {
             if(index<0 || index+1>=args.Length || !UInt32.TryParse(args[index+1],out value) || value==0) throw new Exception("安装包启动参数无效。"); return value;
         }
         public static int Run(string[] args,bool packaged) {
+            if(!packaged && InheritedLaunch(args)) return Execute(args,false,null,true);
             LaunchWindow.ConfigureApplication();
             using(LaunchWindow window=new LaunchWindow("正在连接受保护程序")) {
                 int exitCode=1;
-                Thread worker=new Thread(()=>exitCode=Execute(args,packaged,window));
+                Thread worker=new Thread(()=>exitCode=Execute(args,packaged,window,false));
                 window.Shown+=(sender,eventArgs)=>{TerminalProcess.BindCancel(window.CancelFromTerminal); worker.Start();};
                 try { Application.Run(window); window.Cancel(); worker.Join(); }
                 finally { TerminalProcess.UnbindCancel(); }
                 return exitCode;
             }
         }
-        static int Execute(string[] args,bool packaged,LaunchWindow window) {
+        static bool InheritedLaunch(string[] args) {
+            Guid id;
+            if(args.Length<4 || args[1]!=SystemPolicy.Sid || !Guid.TryParseExact(args[2],"D",out id)) return false;
+            try {
+                using(NamedPipeClientStream pipe=new NamedPipeClientStream(".","IPGuard-"+SystemPolicy.Sid,PipeDirection.InOut,PipeOptions.Asynchronous)) {
+                    pipe.Connect(300);
+                    using(StreamReader reader=new StreamReader(pipe,new UTF8Encoding(false),false,1024,true)) using(StreamWriter writer=new PipeWriter(pipe)) {
+                        writer.WriteLine(Data.Json().Serialize(new { action="scope",id=args[2] }));
+                        Task<string> response=Task.Run(()=>reader.ReadLine());
+                        if(!response.Wait(1500) || response.Result==null || response.Result.Length>16384) return false;
+                        GateMessage result=Data.Json().Deserialize<GateMessage>(response.Result);
+                        return result!=null && result.inherit;
+                    }
+                }
+            } catch(IOException) { return false; }
+            catch(UnauthorizedAccessException) { return false; }
+            catch(TimeoutException) { return false; }
+            catch(InvalidOperationException) { return false; }
+            catch(AggregateException) { return false; }
+            catch(ArgumentException) { return false; }
+        }
+        static int Execute(string[] args,bool packaged,LaunchWindow window,bool inherited) {
             Win32.ProcessInfo info=new Win32.ProcessInfo(); string ip="",expected=""; bool processOwned=false;
             try {
                 if(args.Length<(packaged ? 6 : 4)) throw new Exception("启动参数无效。");
@@ -61,23 +84,23 @@ namespace IpGuard {
                 if(sid!=SystemPolicy.Sid || !Guid.TryParseExact(id,"D",out parsed)) throw new Exception("启动标识无效。");
                 Config config=Data.Load(); Target target=config.apps.SingleOrDefault(t=>t.id==id);
                 if(target==null || !target.enabled) throw new Exception("该程序尚未启用防护。");
-                expected=config.settings.expectedIp; window.Context(target.name,expected);
+                expected=config.settings.expectedIp; if(window!=null) window.Context(target.name,expected);
                 string exe=target.path;
                 if(packaged) { info=PackagePolicy.OpenTarget(target,Argument(args,"-p"),Argument(args,"-tid")); processOwned=true; }
                 using(NamedPipeClientStream pipe=new NamedPipeClientStream(".","IPGuard-"+sid,PipeDirection.InOut,PipeOptions.Asynchronous)) {
-                    Action cancel=()=>pipe.Dispose(); window.CancelRequested+=cancel;
+                    Action cancel=()=>pipe.Dispose(); if(window!=null) window.CancelRequested+=cancel; else TerminalProcess.BindCancel(cancel);
                     try {
-                        window.Progress(new ProbeProgress("connection","连接守护","running","等待本机启动校验"));
+                        if(window!=null) window.Progress(new ProbeProgress("connection","连接守护","running","等待本机启动校验"));
                         try { pipe.Connect(4000); } catch(TimeoutException) { throw new Exception("请先运行 IP Guard，再启动受保护程序。"); }
-                        window.Progress(new ProbeProgress("connection","连接守护","ok","守护连接已建立"));
+                        if(window!=null) window.Progress(new ProbeProgress("connection","连接守护","ok","守护连接已建立"));
                         using(StreamReader reader=new StreamReader(pipe,new UTF8Encoding(false),false,1024,true)) using(StreamWriter writer=new PipeWriter(pipe)) {
-                            writer.WriteLine(Data.Json().Serialize(new { id=id,path=exe,package=packaged,pid=info.pid,tid=info.tid }));
+                            writer.WriteLine(Data.Json().Serialize(new { id=id,path=exe,package=packaged,pid=info.pid,tid=info.tid,inherit=inherited }));
                             GateMessage result=null;
                             for(int n=0;n<64;n++) {
                                 GateMessage message=Data.Json().Deserialize<GateMessage>(ReadTimed(reader,15000));
                                 if(message==null) throw new Exception("启动校验响应无效。");
-                                if(message.type=="context") { expected=message.expectedIp ?? expected; window.Context(message.name ?? target.name,expected); }
-                                else if(message.type=="progress" && message.data!=null) window.Progress(message.data);
+                                if(message.type=="context") { expected=message.expectedIp ?? expected; if(window!=null) window.Context(message.name ?? target.name,expected); }
+                                else if(message.type=="progress" && message.data!=null) { if(window!=null) window.Progress(message.data); }
                                 else { result=message; break; }
                             }
                             if(result==null || result.allow==null) throw new Exception("启动校验未完成。");
@@ -106,20 +129,20 @@ namespace IpGuard {
                                 Win32.Check(Win32.AssignProcessToJobObject(lease.job,info.process),"无法建立进程树防护");
                                 writer.WriteLine("started");
                                 if(ReadTimed(reader,5000)!="run") throw new Exception("启动许可已撤销。");
-                                lease.Begin(reader); window.Success(ip,expected);
-                                if(!window.WaitForRelease(lease.Alive)) throw new Exception("启动许可已撤销，程序保持停止。");
+                                lease.Begin(reader); if(window!=null) window.Success(ip,expected);
+                                if(window!=null ? !window.WaitForRelease(lease.Alive) : !lease.Alive()) throw new Exception("启动许可已撤销，程序保持停止。");
                                 TerminalProcess.MarkStarted();
                                 if(Win32.ResumeThread(info.thread)==UInt32.MaxValue) throw new Exception("恢复目标进程失败。");
                                 MonitorProcess(info,lease);
                                 uint exitCode; Win32.Check(Win32.GetExitCodeProcess(info.process,out exitCode)); return exitCode==259 ? 1 : unchecked((int)exitCode);
                             }
                         }
-                    } finally { window.CancelRequested-=cancel; }
+                    } finally { if(window!=null) window.CancelRequested-=cancel; else TerminalProcess.UnbindCancel(); }
                 }
-            } catch(Exception error) { window.Block(error.GetBaseException().Message,ip,expected,error.GetBaseException() is FirewallDisabledException); return 1; }
+            } catch(Exception error) { if(window!=null) window.Block(error.GetBaseException().Message,ip,expected,error.GetBaseException() is FirewallDisabledException); else Console.Error.WriteLine("IP Guard · "+error.GetBaseException().Message); return 1; }
             finally {
                 if(processOwned) { Win32.TerminateProcess(info.process,1); Win32.CloseHandle(info.thread); Win32.CloseHandle(info.process); }
-                window.End();
+                if(window!=null) window.End();
             }
         }
         [DllImport("kernel32.dll",SetLastError=true)] static extern bool QueryInformationJobObject(IntPtr job,int type,IntPtr info,uint length,IntPtr returned);

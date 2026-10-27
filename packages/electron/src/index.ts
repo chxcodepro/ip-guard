@@ -1,7 +1,7 @@
 import { z } from "zod";
 
-export const nativeVersion = "0.9.0";
-export const nativeProtocol = 5;
+export const nativeVersion = "0.9.1";
+export const nativeProtocol = 6;
 export const browserExtensionId = "blmgamidelconfabgilaacbkokomegep";
 export const browserHostName = "com.ipguard.browser";
 export const browserStateSchema = z
