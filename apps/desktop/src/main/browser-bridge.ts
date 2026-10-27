@@ -2,8 +2,9 @@ import { createServer } from "node:net";
 import type { Server, Socket } from "node:net";
 
 import { nativeVersion } from "@ip-guard/electron";
-import type { BrowserState } from "@ip-guard/electron";
+import type { BrowserState, ExtensionStatus } from "@ip-guard/electron";
 
+import { browserInstallations } from "#src/main/browser-installation.ts";
 import type { Guardian } from "#src/main/guardian.ts";
 
 export class BrowserBridge {
@@ -77,6 +78,22 @@ export class BrowserBridge {
   }
   private publish() {
     for (const socket of this.clients) this.send(socket);
+  }
+  async status(): Promise<ExtensionStatus> {
+    const info = await browserInstallations();
+    const connections = this.clients.size;
+    return {
+      ...info,
+      connections,
+      phase:
+        connections > 0
+          ? "running"
+          : info.installedBrowsers.length
+            ? "installed"
+            : info.error
+              ? "unknown"
+              : "missing",
+    };
   }
   close() {
     clearInterval(this.timer);

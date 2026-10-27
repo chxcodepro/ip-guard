@@ -78,6 +78,7 @@ namespace IpGuard {
             if (t.path.StartsWith(@"\\") || (exists && !File.Exists(t.path))) throw new Exception("请选择本机存在的 EXE 文件。");
             if (t.arguments == null || t.arguments.Length > 4096 || t.arguments.IndexOf('\0') >= 0) throw new Exception("启动参数无效。");
             string name = Path.GetFileName(t.path).ToLowerInvariant();
+            if(name=="ipguard.terminal.exe") throw new Exception("启动门卫保留原启动方式。");
             string[] critical = { "ipguard.native.exe", "ip guard.exe", "explorer.exe", "winlogon.exe", "csrss.exe", "services.exe", "lsass.exe", "svchost.exe", "smss.exe", "wininit.exe", "dwm.exe", "taskmgr.exe", "cmd.exe", "powershell.exe", "pwsh.exe", "conhost.exe", "reg.exe", "netsh.exe", "schtasks.exe", "rundll32.exe" };
             if (critical.Contains(name)) throw new Exception("请选择普通应用；系统与恢复工具保留原有启动方式。");
         }

@@ -21,6 +21,7 @@ export class ApplicationUpdates extends EventEmitter<{ update: [UpdateState] }> 
     repository: "",
   };
   private started = false;
+  private downloadedVersion = "";
   private onInstalling: () => void;
   private onInstallError: () => void;
   constructor(onInstalling: () => void, onInstallError: () => void) {
@@ -55,10 +56,10 @@ export class ApplicationUpdates extends EventEmitter<{ update: [UpdateState] }> 
     );
     autoUpdater.on("update-available", (info) =>
       this.set({
-        phase: "available",
+        phase: this.downloadedVersion === info.version ? "downloaded" : "available",
         latestVersion: info.version,
         checkedAt: new Date().toISOString(),
-        message: "发现新版本",
+        message: this.downloadedVersion === info.version ? "更新已下载" : "发现新版本",
       }),
     );
     autoUpdater.on("update-not-available", () =>
@@ -71,14 +72,15 @@ export class ApplicationUpdates extends EventEmitter<{ update: [UpdateState] }> 
         message: "正在下载更新",
       }),
     );
-    autoUpdater.on("update-downloaded", (info) =>
+    autoUpdater.on("update-downloaded", (info) => {
+      this.downloadedVersion = info.version;
       this.set({
         phase: "downloaded",
         latestVersion: info.version,
         progress: 100,
         message: "更新已下载",
-      }),
-    );
+      });
+    });
     autoUpdater.on("error", (error) => {
       if (this.state.phase === "installing") this.onInstallError();
       this.set({ phase: "error", message: error.message.slice(0, 220) });
@@ -100,6 +102,7 @@ export class ApplicationUpdates extends EventEmitter<{ update: [UpdateState] }> 
     } catch (error) {
       this.set({
         phase: "error",
+        checkedAt: new Date().toISOString(),
         message: error instanceof Error ? error.message.slice(0, 220) : "更新检查失败",
       });
     }

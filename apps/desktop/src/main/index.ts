@@ -66,7 +66,7 @@ const open = () =>
   });
 
 const start = () => {
-  setupIpc(devOrigin, guardian, coffee, claude, updates);
+  setupIpc(devOrigin, guardian, coffee, claude, updates, browserBridge);
   guardian.start();
   coffee.start();
   updates.start();
@@ -86,6 +86,7 @@ const start = () => {
     }
   });
   const show = () => {
+    void updates.check();
     win.show();
     if (win.isMinimized()) win.restore();
     win.focus();
@@ -139,11 +140,13 @@ const start = () => {
 if (app.requestSingleInstanceLock()) {
   app.on("ready", start);
   app.on("activate", () => {
+    void updates.check();
     if (BrowserWindow.getAllWindows().length === 0) {
       open();
     }
   });
   app.on("second-instance", () => {
+    void updates.check();
     const [win] = BrowserWindow.getAllWindows();
     win?.show();
     win?.focus();

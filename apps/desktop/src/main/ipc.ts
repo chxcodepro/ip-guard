@@ -6,6 +6,7 @@ import { app, BrowserWindow, dialog, ipcMain, shell } from "electron";
 import { commandSchema, desktopChannels } from "@ip-guard/electron";
 import type { Reply } from "@ip-guard/electron";
 
+import type { BrowserBridge } from "#src/main/browser-bridge.ts";
 import type { ClaudeIPv4 } from "#src/main/claude-ip.ts";
 import { claudeStatus, stopClaudeTrees } from "#src/main/claude-processes.ts";
 import type { CoffeeDiagnostics } from "#src/main/coffee.ts";
@@ -21,6 +22,7 @@ export const setupIpc = (
   coffee: CoffeeDiagnostics,
   claude: ClaudeIPv4,
   updates: ApplicationUpdates,
+  browser: BrowserBridge,
 ) => {
   updates.on("update", (state) => {
     for (const window of BrowserWindow.getAllWindows())
@@ -42,6 +44,7 @@ export const setupIpc = (
     )
       throw new Error("Untrusted IPC sender");
     const command = commandSchema.parse(input);
+    if (command.action === "extension:status") return { extension: await browser.status() };
     if (command.action === "extension:setup") {
       await guardian.request("browser:register");
       const directory = app.isPackaged

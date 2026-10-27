@@ -945,6 +945,26 @@ input::placeholder {
   color: var(--g-muted);
   flex-shrink: 0;
 }
+.preset-button:last-of-type:nth-child(odd) {
+  grid-column: 1 / -1;
+}
+.extension-guide {
+  border-top: 1px solid var(--g-line);
+  padding: 12px 24px 20px;
+  color: var(--g-muted);
+  font-size: 13px;
+  line-height: 1.8;
+}
+.extension-guide ol {
+  margin: 0;
+  padding-left: 20px;
+  list-style: decimal;
+}
+.extension-guide code {
+  color: var(--g-ink);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
 .preset-button > span {
   min-width: 0;
   font-size: 12px;

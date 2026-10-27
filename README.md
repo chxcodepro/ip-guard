@@ -19,12 +19,19 @@ Windows 10/11 x64 桌面公网 IPv4 守卫。使用 VibeStart CLI 0.1.1 创建�
 
 ## Claude 路径预设
 
-在「添加程序」中选择「Claude Code（npm）」或「Claude Desktop」，自动填写当前安装路径与名称。预设只填表，添加后仍需手动开启防护。
+在「添加程序」中选择「Claude Code（npm）」「Claude Code（原生）」或「Claude Desktop」，自动填写当前安装路径与名称。预设只填表，添加后仍需手动开启防护。
 
 - npm：定位当前用户的全局安装目录，读取包内原生 `claude.exe`，沿用 `claude.cmd` 实际调用的 EXE。
+- 原生：识别 [官方 irm 安装](https://code.claude.com/docs/en/setup)的独立版本，检查 `%USERPROFILE%/.local/bin/claude.exe` 和 PATH 中的独立 EXE。只读取文件信息，不启动 Claude；未安装显示「未找到」，可手动浏览选择。
 - Desktop：读取当前注册的 Claude MSIX 主应用路径，也支持传统安装的卸载注册信息。
 
 每次打开添加窗口都会重新定位。已在列表中的路径显示「已添加」，预设和重复添加操作禁用。MSIX Desktop 更新前解除旧路径防护，更新后重新选择预设并启用；版本目录随 Desktop 更新变化。未找到或定位失败时可以浏览选择 EXE。
+
+程序行的铅笔按钮可编辑名称与启动参数。保存不停止当前进程，参数在下次从 IP Guard 点击启动时生效；从终端启动继续使用该终端输入的参数。
+
+### 从原终端启动
+
+在 PowerShell、CMD 或 Pebrel 中继续使用原来的 `claude` 命令。控制台 EXE 使用 `IpGuard.Terminal.exe` 门卫，继承原终端输入输出、环境和工作目录。门卫固定执行已登记的 EXE，保留原参数、argv0 和退出码；GUI 与 MSIX 程序继续使用原窗口门卫。
 
 ## Claude 进程控制
 
@@ -82,6 +89,8 @@ IPv6 使用独立的 IPv6 请求检测公网、Cloudflare 和 Claude 出口，�
 
 浏览器连接使用 Native Messaging，不接管系统代理。保留现有 Claude 会话时，可先下载安装包与插件，保存会话后再安装。
 
+设置页显示「未安装」「已安装」「正在运行」。Chrome / Edge 标准用户目录中的本扩展安装记录用于判断已安装，实时宿主连接用于判断正在运行；读取失败显示未知。页面可见时每 5 秒刷新，恢复焦点立即刷新。自定义用户目录中的扩展连接后也会显示正在运行。
+
 ## 解除防护与恢复
 
 单个程序：关闭程序旁的防护开关，会结束其受保护进程，移除本工具的 IFEO 路径过滤项和防火墙规则。
@@ -114,12 +123,12 @@ npx --yes pnpm@12.15.0 exec vp run package:desktop
 
 在 [chxcodepro/ip-guard](https://github.com/chxcodepro/ip-guard) 发布稳定版 Release，即可触发 Windows 安装包构建：
 
-1. 运行 `pnpm run version:app 0.8.1`，同步应用、原生组件与浏览器扩展版本。
-2. 提交并推送代码，在该提交上创建并发布 `v0.8.1` Release。标签须与应用版本完全一致。
+1. 运行 `pnpm run version:app 0.9.1`，同步应用、原生组件与浏览器扩展版本。
+2. 提交并推送代码，在该提交上创建并发布 `v0.9.1` Release。标签须与应用版本完全一致。
 3. 等待 `Build Windows release` 工作流完成。它会向该 Release 附加桌面安装器、对应 `.blockmap`、`latest.yml` 和同版本浏览器扩展 ZIP。
 4. 首次手动安装 GitHub 构建的版本，软件会自动绑定该仓库的更新源。
 
-之后软件启动时检查更新，也可在「防护设置 → 软件更新」手动检查、下载，再确认「安装并重启」。安装会结束受保护程序，请先保存会话。关闭窗口或普通退出时保留已下载更新，等待下次主动安装。
+每次启动、重新打开托盘中的实例或从托盘打开窗口时检查更新；正在检查、下载或安装时复用当前操作。也可在「防护设置 → 软件更新」手动检查、下载，再确认「安装并重启」。安装会结束受保护程序，请先保存会话。关闭窗口或普通退出时保留已下载更新，等待下次主动安装。
 
 本地安装包未绑定仓库时显示「GitHub 更新源未配置」，请安装 Releases 提供的版本。构建流程使用 [electron-updater](https://www.electron.build/docs/features/auto-update/) 的 GitHub provider 与 NSIS 更新元数据。
 
@@ -127,6 +136,7 @@ npx --yes pnpm@12.15.0 exec vp run package:desktop
 
 - `apps/desktop/native/`：IFEO、Job、网络监控、防火墙、登录任务、恢复。
 - `apps/desktop/native/LaunchWindow.cs`、`LaunchGate.cs`：独立启动浮窗与挂起、租约、恢复执行。
+- `apps/desktop/native/TerminalProcess.cs`：控制台门卫、标准句柄继承与退出码。
 - `apps/desktop/native/PackagePolicy.cs`：保留 MSIX 身份的启动、接管与恢复。
 - `apps/desktop/src/main/`：守护器通信、权限重启、托盘与窗口。
 - `apps/desktop/src/main/coffee.ts`：独立的 Net.Coffee 数据采集。
@@ -135,6 +145,7 @@ npx --yes pnpm@12.15.0 exec vp run package:desktop
 - `apps/desktop/native/ClaudeProbe.cs`：原生校验向主进程请求新结果，验证地址及新鲜度。
 - `apps/desktop/src/main/claude-processes.ts`：当前用户 Claude 进程查询与确认后的树终止。
 - `apps/desktop/src/main/updates.ts`：GitHub 更新状态、下载与确认安装。
+- `apps/desktop/src/main/browser-installation.ts`：Chrome / Edge 扩展安装记录查询。
 - `.github/workflows/release.yml`：Release 发布后的 Windows 构建与附件上传。
 - `packages/electron/src/index.ts`：IPC Schema 与类型。
 - `apps/web/src/components/guard-app.tsx`、`apps/web/src/guard.css`：双主题操作界面。
@@ -147,8 +158,8 @@ Windows API 依据：[MSIX 调试生命周期](https://learn.microsoft.com/en-us
 
 ## 验证状态
 
-0.8.0 已完成编译打包、修改范围的 TypeScript / lint 检查及双主题界面检查。独立 Chromium 已实际加载扩展，确认守护离线时默认跳转本地阻断页。未执行测试套件；模板界面断言已按用户授权同步，未运行。
+0.9.0 已完成编译打包、修改范围 TypeScript / lint 与双主题界面检查。新控制台门卫通过现有守护校验后，将 Claude 版本输出回原 PowerShell 通道，完整路径与别名调用均返回 0。安装状态读取识别到本机 Chrome 扩展。未执行测试套件。
 
-真实 EXE 接管、浏览器与管理员守护连接、地址切换时的既有页面终止、开机登录、卸载恢复及软件内更新安装仍待目标环境联动验收。安装新版前请保存受保护程序中的内容。
+Pebrel 完整交互、独立原生 Claude 的实际启动、地址切换时的既有页面终止、开机登录、卸载恢复及软件内更新安装仍待目标环境联动验收。安装新版前请保存受保护程序中的内容。
 
 Windows API 依据：[IFEO 启动转交](https://devblogs.microsoft.com/oldnewthing/20070702-00/?p=26193)、[Job Objects](https://learn.microsoft.com/en-us/windows/win32/procthread/job-objects)、[路径过滤与调试创建机制](https://diversenok.github.io/2021/02/26/IFEO.html)。

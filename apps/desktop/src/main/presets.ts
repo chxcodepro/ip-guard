@@ -14,6 +14,7 @@ const metadataSchema = z.object({
   npmPrefix: z.string(),
   npmError: z.string(),
   desktopError: z.string(),
+  native: z.array(z.object({ path: z.string(), version: z.string() })),
   desktop: z.array(
     z.object({
       path: z.string(),
@@ -33,6 +34,14 @@ $ErrorActionPreference='Stop'
 [Console]::OutputEncoding=[System.Text.UTF8Encoding]::new($false)
 $shim=Get-Command claude.cmd -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
 $prefix=''; $npmError=''; $desktopError=''; $desktop=@()
+$native=@()
+$nativePaths=@((Join-Path $env:USERPROFILE '.local\\bin\\claude.exe'))
+$nativePaths+=@(Get-Command claude.exe -CommandType Application -All -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Source)
+foreach($file in $nativePaths | Select-Object -Unique) {
+  if((Test-Path -LiteralPath $file -PathType Leaf) -and $file -notmatch '[\\\\/]node_modules[\\\\/]|[\\\\/]WindowsApps[\\\\/]') {
+    $native+=@{path=$file;version=[string](Get-Item -LiteralPath $file).VersionInfo.ProductVersion}
+  }
+}
 $npm=Get-Command npm.cmd -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
 if($npm) {
   try {
@@ -55,7 +64,7 @@ Get-ItemProperty -Path $keys -ErrorAction SilentlyContinue | Where-Object { $_.D
   if($_.InstallLocation) { $location=Join-Path $_.InstallLocation 'Claude.exe' }
   $desktop+=@{path=$location;icon=[string]$_.DisplayIcon;version=[string]$_.DisplayVersion;source='installer'}
 }
-@{shim=$(if($shim){[string]$shim.Source}else{''});npmPrefix=$prefix;npmError=$npmError;desktopError=$desktopError;desktop=@($desktop)} | ConvertTo-Json -Depth 4 -Compress
+@{shim=$(if($shim){[string]$shim.Source}else{''});npmPrefix=$prefix;npmError=$npmError;desktopError=$desktopError;desktop=@($desktop);native=@($native)} | ConvertTo-Json -Depth 4 -Compress
 `;
 
 async function nativeExe(file: string) {
@@ -79,11 +88,13 @@ function inside(root: string, file: string) {
   return relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative);
 }
 async function discover(): Promise<AppPreset[]> {
+  let discoveryError = "";
   let metadata: z.infer<typeof metadataSchema> = {
     shim: "",
     npmPrefix: "",
     npmError: "",
     desktopError: "",
+    native: [],
     desktop: [],
   };
   try {
@@ -98,6 +109,7 @@ async function discover(): Promise<AppPreset[]> {
     const value: unknown = JSON.parse(result.stdout.trim().replace(/^\uFEFF/, ""));
     metadata = metadataSchema.parse(value);
   } catch {
+    discoveryError = "安装信息读取失败，请浏览选择";
     metadata.npmError = "自动定位失败，请浏览选择";
     metadata.desktopError = "安装信息读取失败，请浏览选择";
   }
@@ -167,7 +179,27 @@ async function discover(): Promise<AppPreset[]> {
     }
     if (desktop.status === "ready") break;
   }
-  return [cli, desktop];
+  let native: AppPreset = {
+    id: "claude-native",
+    name: "Claude Code（原生）",
+    path: "",
+    version: "",
+    status: discoveryError ? "error" : "missing",
+    message: discoveryError || "未找到独立安装的 claude.exe",
+  };
+  for (const candidate of metadata.native) {
+    if (await nativeExe(candidate.path)) {
+      native = {
+        ...native,
+        path: path.resolve(candidate.path),
+        version: candidate.version,
+        status: "ready",
+        message: "",
+      };
+      break;
+    }
+  }
+  return [cli, native, desktop];
 }
 let pending: Promise<AppPreset[]> | undefined;
 export function claudePresets(): Promise<AppPreset[]> {

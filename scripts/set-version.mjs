@@ -4,7 +4,7 @@ import { fileURLToPath } from "node:url";
 
 const version = process.argv[2];
 if (!version || !/^\d+\.\d+\.\d+$/.test(version))
-  throw new Error("Usage: pnpm run version:app 0.8.1");
+  throw new Error("Usage: pnpm run version:app 0.9.1");
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const contract = path.join(root, "packages/electron/src/index.ts");
 const source = readFileSync(contract, "utf8");

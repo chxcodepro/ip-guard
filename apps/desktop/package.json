@@ -1,6 +1,6 @@
 {
   "name": "@ip-guard/desktop",
-  "version": "0.8.0",
+  "version": "0.9.0",
   "private": true,
   "description": "Windows application IPv4 launch gate and network guardian",
   "type": "module",

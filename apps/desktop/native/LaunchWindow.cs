@@ -101,6 +101,7 @@ namespace IpGuard {
         }
         public void End() { Post(()=>{if(phase!="blocked") { finishing=true; Close(); }}); }
         public void Cancel() { if(cancelled) return; cancelled=true; released.TrySetResult(false); Action action=CancelRequested; if(action!=null) action(); }
+        public void CancelFromTerminal() { Cancel(); Post(()=>{finishing=true; Close();}); }
         void TickScene() {
             double now=clock.Elapsed.TotalMilliseconds;
             if(Visible && phase=="running" && motion) Opacity=Math.Min(1,now/160);

@@ -25,6 +25,8 @@ namespace IpGuard {
             RequireAdmin(); Data.Validate(app, true);
             PackageIdentity package=PackagePolicy.Find(app.path);
             if(package!=null) { Unintercept(app); PackagePolicy.Enable(app,package); return; }
+            string debugger=TerminalProcess.IsConsole(app.path) ? Path.Combine(Path.GetDirectoryName(Exe),"IpGuard.Terminal.exe") : Exe;
+            if(!File.Exists(debugger)) throw new Exception("启动门卫安装不完整，请重新安装 IP Guard。");
             foreach (RegistryView view in Views) {
                 using (RegistryKey root = RegistryKey.OpenBaseKey(RegistryHive.LocalMachine, view))
                 using (RegistryKey parent = root.CreateSubKey(Ifeo + "\\" + Path.GetFileName(app.path))) {
@@ -42,7 +44,7 @@ namespace IpGuard {
                         if (existingOwner != null && (string)existingOwner != Owner) throw new Exception("该拦截项属于其他用户。");
                         child.SetValue("IPGuardOwner", Owner);
                         child.SetValue("FilterFullPath", app.path);
-                        child.SetValue("Debugger", Data.Quote(Exe) + " gate " + Sid + " " + app.id);
+                        child.SetValue("Debugger", Data.Quote(debugger) + " gate " + Sid + " " + app.id);
                     }
                     parent.SetValue("UseFilter", 1, RegistryValueKind.DWord);
                 }

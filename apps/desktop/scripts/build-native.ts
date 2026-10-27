@@ -44,23 +44,29 @@ const compiler = path.join(
 const sources = readdirSync(path.join(root, "native"))
   .filter((file) => file.endsWith(".cs"))
   .map((file) => path.join(root, "native", file));
-const result = spawnSync(
-  compiler,
-  [
-    "/nologo",
-    "/target:winexe",
-    "/platform:x64",
-    "/optimize+",
-    "/utf8output",
-    "/reference:System.Web.Extensions.dll",
-    "/reference:Microsoft.CSharp.dll",
-    "/reference:System.Windows.Forms.dll",
-    "/reference:System.Drawing.dll",
-    `/out:${path.join(output, "IpGuard.Native.exe")}`,
-    buildInfo,
-    ...sources,
-  ],
-  { stdio: "inherit" },
-);
-if (result.error) throw result.error;
-if (result.status !== 0) process.exit(result.status ?? 1);
+for (const entry of [
+  { target: "winexe", main: "Program", file: "IpGuard.Native.exe" },
+  { target: "exe", main: "TerminalProgram", file: "IpGuard.Terminal.exe" },
+]) {
+  const result = spawnSync(
+    compiler,
+    [
+      "/nologo",
+      `/target:${entry.target}`,
+      `/main:IpGuard.${entry.main}`,
+      "/platform:x64",
+      "/optimize+",
+      "/utf8output",
+      "/reference:System.Web.Extensions.dll",
+      "/reference:Microsoft.CSharp.dll",
+      "/reference:System.Windows.Forms.dll",
+      "/reference:System.Drawing.dll",
+      `/out:${path.join(output, entry.file)}`,
+      buildInfo,
+      ...sources,
+    ],
+    { stdio: "inherit" },
+  );
+  if (result.error) throw result.error;
+  if (result.status !== 0) process.exit(result.status ?? 1);
+}

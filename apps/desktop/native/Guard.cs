@@ -183,6 +183,14 @@ namespace IpGuard {
                 } else {
                     Target t = Find(input["targetId"] as string);
                     if(action == "protect") Protect(t, (bool)input["enabled"]);
+                    else if(action == "edit") {
+                        Target changed=new Target { id=t.id,path=t.path,enabled=t.enabled,name=input["name"] as string,arguments=input["arguments"] as string };
+                        Data.Validate(changed,false);
+                        List<Target> next=config.apps.Select(a=>a.id==t.id ? changed : a).ToList();
+                        Data.Save(new Config { settings=config.settings,apps=next,autostart=config.autostart,rulesLocked=config.rulesLocked,networkAdapterId=config.networkAdapterId,networkAdapterName=config.networkAdapterName });
+                        lock(state) config.apps=next;
+                        Log("info",changed.name+" · 启动配置已更新");
+                    }
                     else if(action == "remove") { if(t.enabled) Protect(t, false); lock(state) config.apps.Remove(t); Data.Save(config); }
                     else if(action == "stop") { StopTarget(t.id); SystemPolicy.Block(t,true); Log("info", t.name + " · 已停止并封锁"); }
                     else if(action == "start") {

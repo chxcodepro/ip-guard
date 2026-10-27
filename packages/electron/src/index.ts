@@ -1,7 +1,7 @@
 import { z } from "zod";
 
-export const nativeVersion = "0.8.0";
-export const nativeProtocol = 4;
+export const nativeVersion = "0.9.0";
+export const nativeProtocol = 5;
 export const browserExtensionId = "blmgamidelconfabgilaacbkokomegep";
 export const browserHostName = "com.ipguard.browser";
 export const browserStateSchema = z
@@ -20,6 +20,13 @@ export const browserStateSchema = z
     { message: "Invalid IPv4 permission" },
   );
 export type BrowserState = z.infer<typeof browserStateSchema>;
+export const extensionStatusSchema = z.object({
+  phase: z.enum(["running", "installed", "missing", "unknown"]),
+  installedBrowsers: z.array(z.enum(["Chrome", "Edge"])),
+  connections: z.number().int().nonnegative(),
+  error: z.string(),
+});
+export type ExtensionStatus = z.infer<typeof extensionStatusSchema>;
 export const claudeIpv4Endpoint = "https://claude.ai/cdn-cgi/trace";
 
 export const desktopBridgeGlobal = "desktop";
@@ -51,7 +58,7 @@ export const coffeeReportSchema = z.object({
 export type CoffeeMetric = z.infer<typeof coffeeMetricSchema>;
 export type CoffeeReport = z.infer<typeof coffeeReportSchema>;
 export const appPresetSchema = z.object({
-  id: z.enum(["claude-cli", "claude-desktop"]),
+  id: z.enum(["claude-cli", "claude-native", "claude-desktop"]),
   name: z.string(),
   path: z.string(),
   version: z.string(),
@@ -141,6 +148,12 @@ export const commandSchema = z.discriminatedUnion("action", [
   z.object({ action: z.literal("lock"), settings: settingsSchema }),
   z.object({ action: z.literal("unlock") }),
   z.object({ action: z.literal("add"), app: appSchema }),
+  z.object({
+    action: z.literal("edit"),
+    id: z.uuid(),
+    name: z.string().min(1).max(100),
+    arguments: z.string().max(4096),
+  }),
   z.object({ action: z.literal("protect"), id: z.uuid(), enabled: z.boolean() }),
   z.object({ action: z.literal("remove"), id: z.uuid() }),
   z.object({ action: z.literal("start"), id: z.uuid() }),
@@ -163,6 +176,7 @@ export const commandSchema = z.discriminatedUnion("action", [
   z.object({ action: z.literal("update:install") }),
   z.object({ action: z.literal("update:releases") }),
   z.object({ action: z.literal("extension:setup") }),
+  z.object({ action: z.literal("extension:status") }),
 ]);
 export type Settings = z.infer<typeof settingsSchema>;
 export type ProtectedApp = z.infer<typeof appSchema>;
@@ -177,6 +191,7 @@ export const replySchema = z.object({
   ipv4: ipv4Schema.optional(),
   claude: claudeStateSchema.optional(),
   appUpdate: updateStateSchema.optional(),
+  extension: extensionStatusSchema.optional(),
 });
 export type Reply = z.infer<typeof replySchema>;
 export interface DesktopApi {

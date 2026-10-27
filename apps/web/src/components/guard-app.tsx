@@ -12,6 +12,7 @@ import {
   Moon,
   Network,
   Play,
+  Pencil,
   Plus,
   RefreshCw,
   ScanLine,
@@ -42,8 +43,10 @@ import type {
 } from "@ip-guard/electron";
 import { claudeIpv4Endpoint, nativeVersion, settingsSchema } from "@ip-guard/electron";
 
+import { BrowserExtensionPanel } from "#src/components/browser-extension-panel.tsx";
 import { ClaudeControl } from "#src/components/claude-control.tsx";
 import { CoffeePage } from "#src/components/coffee-page.tsx";
+import { EditAppDialog } from "#src/components/edit-app-dialog.tsx";
 import { UpdatePanel } from "#src/components/update-panel.tsx";
 
 import "#src/guard.css";
@@ -381,7 +384,7 @@ function AddDialog({
                     setSelected(preset.id);
                   }}
                 >
-                  {preset.id === "claude-cli" ? (
+                  {preset.id !== "claude-desktop" ? (
                     <TerminalSquare size={18} />
                   ) : (
                     <Monitor size={18} />
@@ -474,6 +477,7 @@ export function GuardApp() {
   const [loading, setLoading] = useState(Boolean(window.desktop));
   const [failure, setFailure] = useState("");
   const [adding, setAdding] = useState(false);
+  const [editing, setEditing] = useState<ProtectedApp | null>(null);
   const [filter, setFilter] = useState("");
   const [ipv6, setIpv6] = useState<CoffeeMetric>();
   const bridge = window.desktop;
@@ -691,6 +695,16 @@ export function GuardApp() {
                   >
                     {running ? <Square size={13} /> : <Play size={14} />}
                     {running ? "停止" : "启动"}
+                  </button>
+                  <button
+                    type="button"
+                    className="icon-btn"
+                    title="编辑启动参数"
+                    aria-label={`编辑 ${target.name}`}
+                    disabled={busy || !available}
+                    onClick={() => setEditing(target)}
+                  >
+                    <Pencil size={16} />
                   </button>
                   <button
                     type="button"
@@ -1021,28 +1035,11 @@ export function GuardApp() {
                     </select>
                   </div>
                 </section>
-                <section className="panel settings-panel">
-                  <div className="panel-heading">
-                    <h2>浏览器防护</h2>
-                    <span className="subtle-label">CHROME / EDGE</span>
-                  </div>
-                  <div className="setting-row">
-                    <span className="setting-icon">
-                      <ShieldCheck size={19} />
-                    </span>
-                    <div>
-                      <strong>Claude 网页扩展</strong>
-                      <span>注册连接并打开扩展文件夹</span>
-                    </div>
-                    <button
-                      className="btn"
-                      disabled={busy || !available}
-                      onClick={() => void invoke({ action: "extension:setup" })}
-                    >
-                      准备浏览器扩展
-                    </button>
-                  </div>
-                </section>
+                <BrowserExtensionPanel
+                  busy={busy}
+                  available={available}
+                  onSetup={async () => Boolean(await invoke({ action: "extension:setup" }))}
+                />
                 <UpdatePanel />
                 <section className="panel settings-panel">
                   <div className="panel-heading">
@@ -1156,6 +1153,22 @@ export function GuardApp() {
           </footer>
         </main>
       </div>
+      {editing && (
+        <EditAppDialog
+          key={editing.id}
+          app={editing}
+          busy={busy}
+          available={available}
+          onClose={() => setEditing(null)}
+          onSave={async (value) => {
+            const reply = await invoke({ action: "edit", id: editing.id, ...value });
+            if (reply?.snapshot) {
+              setEditing(null);
+              toast.success("启动配置已更新");
+            }
+          }}
+        />
+      )}
       {adding && (
         <AddDialog
           apps={snapshot.apps}

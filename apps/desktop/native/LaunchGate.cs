@@ -45,13 +45,15 @@ namespace IpGuard {
         public static int Run(string[] args,bool packaged) {
             LaunchWindow.ConfigureApplication();
             using(LaunchWindow window=new LaunchWindow("正在连接受保护程序")) {
-                Thread worker=new Thread(()=>Execute(args,packaged,window));
-                window.Shown+=(sender,eventArgs)=>worker.Start();
-                Application.Run(window); window.Cancel(); worker.Join();
+                int exitCode=1;
+                Thread worker=new Thread(()=>exitCode=Execute(args,packaged,window));
+                window.Shown+=(sender,eventArgs)=>{TerminalProcess.BindCancel(window.CancelFromTerminal); worker.Start();};
+                try { Application.Run(window); window.Cancel(); worker.Join(); }
+                finally { TerminalProcess.UnbindCancel(); }
+                return exitCode;
             }
-            return 0;
         }
-        static void Execute(string[] args,bool packaged,LaunchWindow window) {
+        static int Execute(string[] args,bool packaged,LaunchWindow window) {
             Win32.ProcessInfo info=new Win32.ProcessInfo(); string ip="",expected=""; bool processOwned=false;
             try {
                 if(args.Length<(packaged ? 6 : 4)) throw new Exception("启动参数无效。");
@@ -62,7 +64,6 @@ namespace IpGuard {
                 expected=config.settings.expectedIp; window.Context(target.name,expected);
                 string exe=target.path;
                 if(packaged) { info=PackagePolicy.OpenTarget(target,Argument(args,"-p"),Argument(args,"-tid")); processOwned=true; }
-                else if(!String.Equals(Path.GetFullPath(args[3]),target.path,StringComparison.OrdinalIgnoreCase)) throw new Exception("启动路径与受保护程序不匹配。");
                 using(NamedPipeClientStream pipe=new NamedPipeClientStream(".","IPGuard-"+sid,PipeDirection.InOut,PipeOptions.Asynchronous)) {
                     Action cancel=()=>pipe.Dispose(); window.CancelRequested+=cancel;
                     try {
@@ -91,9 +92,15 @@ namespace IpGuard {
                             using(Lease lease=new Lease(handle)) {
                                 if(packaged) Win32.Check(Win32.DebugActiveProcess(info.pid),"无法接管安装包进程");
                                 else {
-                                    Win32.StartupInfo startup=new Win32.StartupInfo(); startup.cb=Marshal.SizeOf(startup);
                                     string command=String.Join(" ",args.Skip(3).Select(Data.Quote));
-                                    Win32.Check(Win32.CreateProcess(exe,new StringBuilder(command),IntPtr.Zero,IntPtr.Zero,false,0x6,IntPtr.Zero,Environment.CurrentDirectory,ref startup,out info),"无法创建受保护程序"); processOwned=true;
+                                    if(TerminalProcess.IsConsole(exe)) {
+                                        TerminalProcess.Attach();
+                                        using(TerminalProcess terminal=new TerminalProcess()) info=terminal.Start(exe,command);
+                                    } else {
+                                        Win32.StartupInfo startup=new Win32.StartupInfo(); startup.cb=Marshal.SizeOf(startup);
+                                        Win32.Check(Win32.CreateProcess(exe,new StringBuilder(command),IntPtr.Zero,IntPtr.Zero,false,0x6,IntPtr.Zero,Environment.CurrentDirectory,ref startup,out info),"无法创建受保护程序");
+                                    }
+                                    processOwned=true;
                                 }
                                 Win32.Check(Win32.DebugSetProcessKillOnExit(true));
                                 Win32.Check(Win32.AssignProcessToJobObject(lease.job,info.process),"无法建立进程树防护");
@@ -101,13 +108,15 @@ namespace IpGuard {
                                 if(ReadTimed(reader,5000)!="run") throw new Exception("启动许可已撤销。");
                                 lease.Begin(reader); window.Success(ip,expected);
                                 if(!window.WaitForRelease(lease.Alive)) throw new Exception("启动许可已撤销，程序保持停止。");
+                                TerminalProcess.MarkStarted();
                                 if(Win32.ResumeThread(info.thread)==UInt32.MaxValue) throw new Exception("恢复目标进程失败。");
                                 MonitorProcess(info,lease);
+                                uint exitCode; Win32.Check(Win32.GetExitCodeProcess(info.process,out exitCode)); return exitCode==259 ? 1 : unchecked((int)exitCode);
                             }
                         }
                     } finally { window.CancelRequested-=cancel; }
                 }
-            } catch(Exception error) { window.Block(error.GetBaseException().Message,ip,expected,error.GetBaseException() is FirewallDisabledException); }
+            } catch(Exception error) { window.Block(error.GetBaseException().Message,ip,expected,error.GetBaseException() is FirewallDisabledException); return 1; }
             finally {
                 if(processOwned) { Win32.TerminateProcess(info.process,1); Win32.CloseHandle(info.thread); Win32.CloseHandle(info.process); }
                 window.End();
