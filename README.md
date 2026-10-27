@@ -1,167 +1,217 @@
 # IP Guard
 
-Windows 10/11 x64 桌面公网 IPv4 守卫。使用 VibeStart CLI 0.1.1 创建，React + Electron 界面，原生 C# 守护器负责 Windows 策略。
+[![Release](https://img.shields.io/github/v/release/chxcodepro/ip-guard)](https://github.com/chxcodepro/ip-guard/releases/latest)
+[![Windows Build](https://github.com/chxcodepro/ip-guard/actions/workflows/release.yml/badge.svg)](https://github.com/chxcodepro/ip-guard/actions/workflows/release.yml)
+![Platform](https://img.shields.io/badge/Windows-10%20%2F%2011%20x64-0078D4)
 
-## 开始使用
+面向 Windows 的公网 IPv4 防护工具。锁定允许的 Claude AI 出口 IPv4，在应用启动前校验，运行期间持续监测；地址异常时结束受保护进程树。配套 Chrome / Edge 扩展可保护 Claude 网页。
 
-1. 从 [GitHub Releases](https://github.com/chxcodepro/ip-guard/releases/latest) 下载 `IP-Guard-Setup-*.exe` 并安装。
-2. 打开 IP Guard。如果显示普通权限，点击「以管理员身份重启」，确认 Windows 授权。
-3. 在「允许的公网 IPv4」旁点「获取当前 IPv4」填入地址，再点「锁定」。获取只改变表单草稿；数据统一取自「Claude 检测」中的「Claude AI 出口」，即 `https://claude.ai/cdn-cgi/trace`。
-4. 关闭目标程序，在「受保护程序」添加 EXE，再打开程序旁的防护开关。
-5. 从启动按钮、原快捷方式或双击 EXE 启动。每次启动都会重新校验。
-6. 按需在设置中开启「开机启动」。登录 Windows 后进入托盘；关闭窗口继续后台运行。
+**[下载最新版](https://github.com/chxcodepro/ip-guard/releases/latest)** · [快速开始](#快速开始) · [浏览器扩展](#浏览器扩展) · [开发构建](#开发构建) · [更新日志](CHANGELOG.zh.md) · [问题反馈](https://github.com/chxcodepro/ip-guard/issues)
 
-安装包尚未配置代码签名。Windows 可能显示未知发布者提示。
+## 功能特性
 
-覆盖升级保留检测配置与程序列表，并恢复已经开启的登录任务；卸载和整体恢复会解除防护。安装器兼容 0.1.0 的旧卸载逻辑，先备份配置，再恢复到新版本。
+- **IP 锁定与持续防护**：启动前校验公网 IPv4，后台轮询并响应网络变化，异常时结束受控进程树。
+- **原终端体验**：保留控制台输入输出、工作目录、环境及退出码；同一受保护进程树的内部调用复用首次许可。
+- **Claude 安装识别**：提供 npm、独立原生安装版和 Desktop 路径预设，也支持手动添加 EXE。
+- **程序管理**：编辑名称与启动参数，查看运行状态，确认后停止 Claude 进程树。
+- **浏览器防护**：Chrome / Edge 扩展保护 `claude.ai` 及其子域，显示安装和运行状态。
+- **网络诊断**：展示 IPv6、网卡、DNS、时区、地区、连通性和风险属性。
+- **桌面集成**：浅色 / 深色 / 系统主题、托盘运行、登录自启动和 GitHub Releases 更新。
 
-原生组件按版本放在 `resources/native/<版本>/`，界面与组件握手匹配后才初始化防护。设置页显示实际守护版本，组件缺失或混装时显示升级错误；启动时保留原有允许 IP、程序列表和锁定状态。
+## 下载与运行要求
 
-## Claude 路径预设
+从 [Releases](https://github.com/chxcodepro/ip-guard/releases/latest) 获取安装文件：
 
-在「添加程序」中选择「Claude Code（npm）」「Claude Code（原生）」或「Claude Desktop」，自动填写当前安装路径与名称。预设只填表，添加后仍需手动开启防护。
+| 文件                          | 用途                                             |
+| ----------------------------- | ------------------------------------------------ |
+| `IP-Guard-Setup-<版本>.exe`   | Windows x64 桌面安装包，包含原生守护和浏览器扩展 |
+| `IP-Guard-Browser-<版本>.zip` | 独立浏览器扩展包，解压后加载                     |
+| `latest.yml`、`*.blockmap`    | 由软件自动更新功能读取的元数据                   |
 
-- npm：定位当前用户的全局安装目录，读取包内原生 `claude.exe`，沿用 `claude.cmd` 实际调用的 EXE。
-- 原生：识别 [官方 irm 安装](https://code.claude.com/docs/en/setup)的独立版本，检查 `%USERPROFILE%/.local/bin/claude.exe` 和 PATH 中的独立 EXE。只读取文件信息，不启动 Claude；未安装显示「未找到」，可手动浏览选择。
-- Desktop：读取当前注册的 Claude MSIX 主应用路径，也支持传统安装的卸载注册信息。
+运行环境：
 
-每次打开添加窗口都会重新定位。已在列表中的路径显示「已添加」，预设和重复添加操作禁用。MSIX Desktop 更新前解除旧路径防护，更新后重新选择预设并启用；版本目录随 Desktop 更新变化。未找到或定位失败时可以浏览选择 EXE。
+- Windows 10 / 11 x64。
+- 管理应用防护需要管理员权限。
+- Windows 防火墙的域、专用、公用三个配置文件均需启用。
+- 网页防护需要 Chrome / Edge，并保持扩展启用。
 
-程序行的铅笔按钮可编辑名称与启动参数。保存不停止当前进程，参数在下次从 IP Guard 点击启动时生效；从终端启动继续使用该终端输入的参数。
+> [!WARNING]
+> 安装或更新、取消 IP 锁定、停止进程及退出 IP Guard 会结束相关受保护程序，请先保存工作。浏览器阻断会中断 Claude 页面，未发送内容可能丢失。
+>
+> 安装包当前未配置代码签名，Windows 可能显示未知发布者提示。
 
-### 从原终端启动
+## 快速开始
 
-在 PowerShell、CMD 或 Pebrel 中继续使用原来的 `claude` 命令。控制台 EXE 使用 `IpGuard.Terminal.exe` 门卫，继承原终端输入输出、环境和工作目录。门卫固定执行已登记的 EXE，保留原参数、argv0 和退出码；GUI 与 MSIX 程序继续使用原窗口门卫。
+1. 安装并打开 IP Guard；若显示普通权限，点击「以管理员身份重启」。
+2. 在「允许的公网 IPv4」旁点击「获取当前 IPv4」，核对地址后点击「锁定」。获取按钮只填入草稿，锁定后才应用规则。
+3. 关闭目标程序，在「受保护程序」中选择 Claude 预设或浏览 EXE，添加后开启防护开关。
+4. 从 IP Guard、原快捷方式或原终端命令启动程序。
+5. 按需开启「开机启动」。登录 Windows 后进入托盘；关闭主窗口继续后台防护。
 
-同一受保护进程树中的同应用内部调用复用首次 IP 许可，例如 Claude 的版本查询和内置文件搜索，不重复弹窗或发起启动查询。归属由 Windows Job 和命名管道真实客户端核对；另开终端启动仍完整校验。后台轮询、网络变化复核及 IP 异常结束整棵进程树的规则保持不变。
+首次启动会显示校验浮窗，展示检测步骤、当次 IPv4 和锁定地址。通过结果保留约 2.2 秒后启动目标；阻断时保留原因及「知道了」按钮。关闭浮窗或按 Esc 取消本次启动。
 
-## Claude 进程控制
+### 程序预设与参数
 
-窗口顶部「停止 Claude 进程树」旁显示运行状态。界面可见时每 3 秒刷新，恢复可见立即刷新；未运行时停止按钮禁用。
+| 预设                | 识别方式                                                                                                                |
+| ------------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| Claude Code（npm）  | 当前 npm 全局目录中 `@anthropic-ai/claude-code` 包的原生 EXE                                                            |
+| Claude Code（原生） | [官方原生安装](https://code.claude.com/docs/en/setup)路径 `%USERPROFILE%/.local/bin/claude.exe`，以及 PATH 中的独立 EXE |
+| Claude Desktop      | 已注册 MSIX 主应用，或传统安装的卸载注册信息                                                                            |
 
-点击停止后确认，会结束当前登录用户、当前 Windows 会话中的 Claude CLI 和 Desktop 及其子进程，未保存会话可能丢失。若 IP Guard 自身由 Claude 子进程启动，请先从 Windows 快捷方式打开 IP Guard，以保留控制通道。读取信息失败会显示状态未知。
+每次打开添加窗口都会重新定位。已添加路径显示「已添加」；未找到或定位失败时，可手动浏览。预设只填表，防护由用户手动开启。
 
-## 运行规则
+点击程序行的铅笔按钮，可修改名称与启动参数。保存后当前进程继续运行，参数在下次从 IP Guard 点击启动时生效；从终端启动使用终端输入的参数。
 
-### 启动浮窗
+顶部「停止 Claude 进程树」会结束当前登录用户、当前 Windows 会话中的 Claude CLI、Desktop 及其子进程，覆盖已添加和未添加的实例，执行前会要求确认。
 
-从原快捷方式、任务栏入口或 IP Guard 启动受保护程序时，先显示独立浮窗。绿色环绕图标转动，左侧按实际进度呈现守护连接、系统防护、检测网址 DNS 解析、公网 IPv4、本机时区与锁定地址对照。完成后显示当次 IPv4 和锁定 IP；匹配时播放绿勾，结果停留 2.2 秒，末段 200ms 淡出后恢复目标程序执行。被阻断时显示原因与「知道了」，窗口保留到确认。关闭浮窗或按 Esc 会取消本次启动。
+在 PowerShell、CMD 或 Pebrel 中继续使用原来的 `claude` 命令。同一受保护进程树中的版本查询、内置文件搜索等内部调用复用首次许可；另开终端独立启动仍完整校验。
 
-时区与 DNS 解析结果仅展示，IPv4 不匹配或校验失败仍是地址阻断依据。浮窗跟随 Windows 深浅色与动画设置，不在任务栏创建图标。MSIX Desktop 保留 Windows 包激活与 AppUserModelID，通过系统包调试入口在执行前接管进程；普通 Win32 与 npm 原生 EXE 沿用全路径 IFEO。
+Claude Desktop 更新后可能更换 MSIX 版本目录。更新前解除旧路径防护，更新后重新选择预设并启用。
 
-### 防护状态
+### 锁定与阻断规则
 
-- 锁定后地址和间隔保持只读，来源固定为 Claude AI 出口。取消锁定需确认，会结束受保护进程树并封锁连接；程序列表和防护开关保留，重新锁定后再启动。锁定状态在重启后保留，旧版已保存的有效 IP 升级后视为已锁定。
-- 启动按钮旁会显示尚缺的条件：锁定 IP、开启程序防护、管理员权限或守护连接。
-- IPv4 完全匹配才放行；网址不可达、超时、证书错误、重定向、返回格式错误也会触发阻断。
-- 默认每 2 秒发起查询，请求共用一个生产者且不并发重复。单次含代理、DNS、HTTPS 与正文的查询最多等待 4.5 秒；变化发现时间包含请求耗时和系统调度。界面显示检测中及最新检测时间。
-- 网卡、网络可用性、Wi-Fi、路由和电源变化只记录并立即复核公网 IPv4。仅在公网 IPv4 不匹配或校验失败时结束受保护 Job，并封锁目标 EXE 的入站、出站连接。
-- 地址匹配时放行 IPv4 与 IPv6；升级时清除本工具 0.1.0 的 IPv6 常驻规则。普通子进程由 Job 共同结束；独立服务、WMI 或既有代理代发的连接需另行识别实际执行进程。
-- 触发 IPv4 阻断后保持程序停止，下一次手动启动会重新校验。
-- 托盘退出会结束受保护进程，保留 IFEO 和防火墙策略。守护程序缺席时原启动方式继续被拦截。门卫失联或收不到租约约 1.8 秒后结束 Job。
-- 检测使用 Electron 网络栈的系统代理设置，使用独立网络会话，并在每次查询前关闭该会话的旧连接，避免代理节点切换后沿用旧隧道。获取按钮、两秒轮询、启动校验与 Claude AI 出口卡片使用同一结果；返回非 IPv4 或检测失败时继续阻断。目标应用若配置独立代理，需确认它与此出口一致。
+允许地址统一取自 **Claude AI 出口 IPv4**：`https://claude.ai/cdn-cgi/trace`。获取按钮、启动校验、后台轮询和检测卡片共用结果，检测网络栈沿用系统代理。
 
-### 网卡检测
+| 状态                     | 处理方式                                 |
+| ------------------------ | ---------------------------------------- |
+| IPv4 匹配且系统防护就绪  | 允许启动，继续后台监测                   |
+| IPv4 不匹配或校验失败    | 阻止启动，结束已受控进程树并封锁目标连接 |
+| 地址未锁定或守护离线     | 保持启动拦截，浏览器扩展保持阻断         |
+| IPv6、网卡或其他诊断异常 | 展示状态与风险提示，地址授权仍依据 IPv4  |
 
-设置页的「监控网卡」可选「自动识别联网网卡」或固定某张网卡。自动模式优先选择系统 IPv4 路由使用的接口；固定模式保留网卡标识，设备移除后显示「不存在」，重新接入后恢复识别。总览显示当前网卡及在线、断开、无 IPv4 或缺失状态。
+- 默认每 2 秒发起查询，锁定前可设置 1–60 秒间隔；单次请求最长等待 4.5 秒。变化发现时间还受请求耗时和系统调度影响。
+- 网络断开、网卡、Wi-Fi、路由和电源变化会触发 IPv4 复核。超时、网址不可达、证书错误、重定向、无效返回或结果过期均按校验不可用处理。
+- 取消锁定需要确认，会停止受保护程序并封锁连接；重新锁定后再手动启动。触发 IP 阻断后也保持程序停止。
+- 托盘退出会结束受保护进程，启动拦截继续保留。要恢复普通启动，请先解除防护或使用恢复工具。
+- 目标程序使用独立代理时，请确认其实际出口与检测结果一致。
 
-网卡信息只作诊断；网络变化触发 Claude 出口 IPv4 复核，地址不匹配或检测失败时阻断。
+## 浏览器扩展
 
-### 开启 Windows 防火墙
+1. 在「防护设置 → 浏览器防护」点击「准备安装扩展」或「打开扩展文件夹」。此操作会注册当前 Windows 用户的连接宿主并打开目录。
+2. Chrome 打开 `chrome://extensions`，Edge 打开 `edge://extensions`。
+3. 开启「开发者模式」，点击「加载已解压的扩展」，选择上述目录。
+4. 保持 IP Guard 运行并锁定地址；扩展显示「校验通过」后打开 Claude。
 
-域、专用或公用配置关闭时，IP Guard 会显示关闭项和操作指引。点「打开 Windows 防火墙」进入管理界面，点击「Windows Defender 防火墙属性」，将域、专用、公用三个选项卡中的「防火墙状态」设为「启用（推荐）」，确定后回到 IP Guard 重试。原 EXE 启动时遇到同类问题也会提示打开管理界面。远程桌面和局域网共享按需保留入站放行规则。
+也可加载 Releases 中扩展 ZIP 解压后的目录。网页阻断时会切换到本地结果页；条件恢复后，点击「返回 Claude」。无痕 / InPrivate 使用需要在扩展详情中单独允许。
 
-## Claude 检测
+设置页显示「未安装」「已安装」「正在运行」或「状态未知」。标准 Chrome / Edge 用户目录中的安装记录用于识别已安装状态，实时宿主连接用于识别正在运行；页面可见时每 5 秒刷新，恢复焦点立即刷新。自定义用户目录中的扩展建立连接后也会显示正在运行。
 
-「Claude 检测」接入 [Net.Coffee 检测页](https://ip.net.coffee/claude/)的公开检测端点：国内、Cloudflare 和 Claude 出口，信任分、支持地区、位置/ASN/运营商、安全属性、连通性与 DNS 解析器。Claude AI 出口随守护轮询实时更新；其余诊断后台每 5 分钟刷新，可手动刷新。出口变动后重新检测关联属性。未取得结果或请求失败会直接显示。
+扩展使用 Native Messaging 和当前用户的只读命名管道，接收状态、IP 及检测时间，聊天内容保持在 Claude 页面中，系统代理设置保持原样。
 
-WebRTC/UDP 在检测页中通过公开 STUN 服务采集；本机时区、语言、浏览器、网络类型、触屏、DNT、WebGL 与 Canvas 信息在本地展示。Claude 出口历史保存在本机，最多 6 条，可清除。
+更新扩展文件后，在扩展管理页点击重新加载。更多说明见 [浏览器扩展文档](apps/browser-extension/README.md)。
 
-Claude AI 出口 IPv4 是允许地址的比较依据；低分、代理、Tor、DNS/UDP 出口不同及其余诊断失败只展示。服务地区和分数采用该站点评估。DNS 未观测到解析器或 UDP 无公网候选时显示未知。
+## 网络诊断
 
-IPv6 使用独立的 IPv6 请求检测公网、Cloudflare 和 Claude 出口，结果同时出现在总览及检测页。公网 IPv6 使用 [ipify 的 IPv6 专用接口](https://www.ipify.org/)。IPv6 请求保持 IPv6 地址族；无可用路由、超时或结果缺失显示未知。IPv6 仅检测，不参与阻断，也不改动系统 IPv6 设置。
+「Claude 检测」接入 [Net.Coffee](https://ip.net.coffee/claude/) 的公开检测端点，提供国内、Cloudflare、Claude 出口以及地区、ASN、运营商、信任分、安全属性、连通性和 DNS 信息。
 
-颜色按站点公开规则呈现：绿色正常、蓝色提示、黄色需核查、红色异常、灰色未知。信任分按 95/80/50/25 分段；受限地区、机房与安全属性分别标记。DNS 依据中国解析器与非中国 Claude 出口组合，UDP 依据公网 IPv4 候选与 Claude 出口不一致标记；时区容差为 1 小时，中国大陆时区单独提示。连接延迟达到 500ms 标黄。异常行同时提供图标和文字。
+- Claude AI 出口随守护轮询更新；其余诊断后台每 5 分钟刷新，也可手动刷新。出口变化后重新检测关联属性。
+- IPv6 使用独立地址族请求检测公网、Cloudflare 与 Claude 出口；公网 IPv6 来源为 [ipify](https://www.ipify.org/)。缺少路由、超时或无结果时显示未知。
+- WebRTC / UDP 通过公开 STUN 服务采集；本机时区、语言、网络类型等信息在本地展示。Claude 出口历史保存在本机，最多 6 条，可清除。
+- 网卡支持自动识别与固定选择，展示在线、断开、缺失或无 IPv4 状态；固定网卡重新接入后恢复识别。
+- 风险颜色采用检测来源的公开规则，并配合文字和图标：绿色正常、蓝色提示、黄色需核查、红色异常、灰色未知。
 
-## 浏览器防护
+诊断项目独立于 IPv4 授权。地址匹配时允许 IPv4 与 IPv6，系统 IPv6 设置保持原样。
 
-0.8.0 起提供 Chrome / Edge 扩展，按同一个锁定 IPv4 保护 `claude.ai` 及子域。IP 不匹配、检测失败、未锁定或守护离线时阻断请求，并将已有 Claude 页面切换到本地结果页；未发送内容可能丢失。
+## 更新、解除防护与恢复
 
-安装新版桌面程序后，在设置中点击「准备浏览器扩展」，再到浏览器扩展管理页开启开发者模式并加载打开的文件夹。也可加载 Releases 中插件 ZIP 解压后的目录。扩展显示匹配后点击「返回 Claude」。[完整安装步骤](apps/browser-extension/README.md)。
+### 软件更新
 
-浏览器连接使用 Native Messaging，不接管系统代理。保留现有 Claude 会话时，可先下载安装包与插件，保存会话后再安装。
+每次启动、重新打开托盘实例或从托盘打开窗口时检查 GitHub Releases，也可在「防护设置 → 软件更新」手动检查、下载并确认安装。正在检查、下载或安装时复用当前操作，已下载版本保留安装入口。
 
-设置页显示「未安装」「已安装」「正在运行」。Chrome / Edge 标准用户目录中的本扩展安装记录用于判断已安装，实时宿主连接用于判断正在运行；读取失败显示未知。页面可见时每 5 秒刷新，恢复焦点立即刷新。自定义用户目录中的扩展连接后也会显示正在运行。
+请使用 Releases 构建版绑定仓库更新源。本地构建显示「GitHub 更新源未配置」时，可安装公开发布版本。升级保留允许地址、锁定状态和程序列表；原生组件按版本隔离并进行握手核对。
 
-## 解除防护与恢复
+### 解除与恢复
 
-单个程序：关闭程序旁的防护开关，会结束其受保护进程，移除本工具的 IFEO 路径过滤项和防火墙规则。
+- **单个程序**：关闭对应防护开关，会结束该受控进程树并移除自有启动拦截和防火墙规则。
+- **整体恢复**：从托盘退出后，运行安装目录的 `resources/recover.cmd` 并确认管理员授权。工具移除当前用户的拦截、规则和登录任务，原配置备份为 `settings.json.recovery.bak`。
+- **卸载**：卸载器调用相同恢复逻辑。请使用启用防护的同一 Windows 账户解除或卸载。
 
-整体恢复：先从托盘退出，再运行安装目录 `resources/recover.cmd` 并确认管理员授权。工具会移除当前用户的 IP Guard 拦截、规则和登录任务；原配置另存为 `settings.json.recovery.bak`。卸载器也会调用同一恢复逻辑。请使用启用防护的同一个 Windows 账户解除或卸载。
+### 配置与日志
 
-配置：`%LOCALAPPDATA%/IPGuard/settings.json`，上次保存备份为 `settings.json.bak`。
+数据目录：`%LOCALAPPDATA%/IPGuard/`。
 
-日志：同目录 `events.jsonl`，达到 1MB 后轮换至 `events.jsonl.1`。界面显示当前会话最近 200 条事件。
+| 文件                  | 内容                                          |
+| --------------------- | --------------------------------------------- |
+| `settings.json`       | 允许地址、锁定状态、程序列表和设置            |
+| `settings.json.bak`   | 上次保存的配置备份                            |
+| `events.jsonl`        | 运行事件；达到 1 MB 后轮换到 `events.jsonl.1` |
+| `guardian-errors.log` | 守护异常退出信息与标准错误尾部                |
 
-## 适用程序
+界面显示当前会话最近 200 条事件，可从「事件日志」打开数据目录。
 
-支持本机普通 Win32 EXE，按完整路径拦截。同名的其他路径保留原行为。MSIX 主应用从已注册包与清单定位入口，使用 Windows 的 `IPackageDebugSettings`；解除和整体恢复时撤销本工具持有的包调试设置。已存在的外部 IFEO 或包调试配置会直接报告。
+## 常见问题
 
-反作弊、反调试和受保护进程可能拒绝接管。MSIX 的旧版 IFEO 设置在下次守护启动时改用包调试入口；原任务栏与快捷方式保持原有包身份。系统关键进程与恢复工具保留原启动方式。此版本采用用户态事件监控与轮询，短暂变化的发现依赖事件和采样时序。
+### 启动按钮呈灰色
 
-## 开发与构建
+查看程序行的条件提示，依次确认管理员权限、守护连接、允许 IP 已锁定，以及程序防护开关已开启。
 
-Node 24，pnpm 12，Windows 自带 .NET Framework 4.x 编译器。无需单独安装 .NET SDK。
+### 提示开启 Windows 防火墙
+
+点击软件内的「打开 Windows 防火墙」，进入「Windows Defender 防火墙属性」，将域、专用、公用三个选项卡中的防火墙状态设为启用，确定后重试。也可按 Win+R 输入 `wf.msc`。
+
+### 登录后没有主窗口
+
+自启动进入托盘，可双击托盘图标打开主窗口。若托盘也没有图标，请在任务计划程序中检查当前用户的 `IPGuard.*` 登录任务及执行记录。
+
+### 原生组件缺失或版本不匹配
+
+保存会话并退出旧实例后，完整安装同一版本。在设置页核对实际原生组件版本；组件目录为安装目录下的 `resources/native/<版本>/`。
+
+### 某些程序无法接管
+
+当前面向普通 Win32 EXE 与已注册 MSIX 主应用，按完整路径区分目标。反作弊、反调试或受保护进程可能拒绝接管。普通子进程由 Job 管理；独立服务、WMI 或既有代理代发连接时，需要识别并管理实际执行程序。
+
+网络变化处理采用用户态事件与轮询，存在采样、请求和调度延迟。具体终端与程序环境的兼容情况可通过 Issues 反馈。
+
+## 开发构建
+
+技术栈为 TypeScript、React、Electron 与 C#，使用 Vite+ 统一构建工具链。Win32 使用路径级 IFEO，MSIX 保留包身份；Job 与租约管理目标进程树。
+
+构建环境：Windows x64、Node.js 24.22.1、pnpm 12.15.0，以及 Windows 自带的 .NET Framework 4.x 编译器。
 
 ```powershell
+git clone https://github.com/chxcodepro/ip-guard.git
+cd ip-guard
 npx --yes pnpm@12.15.0 install
 npx --yes pnpm@12.15.0 exec vp run dev
+```
+
+构建安装包与扩展 ZIP：
+
+```powershell
 npx --yes pnpm@12.15.0 exec vp run package:desktop
 ```
 
-若已安装 Vite+，可直接使用 `vp install`、`vp run dev`、`vp run package:desktop`。浏览器预览只显示界面；管理策略通过 Electron 的隔离桥执行。开发模式需要从管理员终端启动才能启用真实防护。
+输出目录为 `apps/desktop/release/`。开发模式管理当前账户的防护配置，启用真实防护需要管理员权限；调试前请保存会话并退出已安装实例。
 
-## GitHub 发布与软件更新
+### 项目结构
 
-在 [chxcodepro/ip-guard](https://github.com/chxcodepro/ip-guard) 发布稳定版 Release，即可触发 Windows 安装包构建：
+```text
+apps/
+  web/                React 桌面界面
+  desktop/            Electron 主进程、原生守护与安装配置
+  browser-extension/  Chrome / Edge 扩展
+packages/
+  electron/           IPC 契约与共享类型
+  ui/                 共享组件与主题
+  config/             TypeScript 配置
+scripts/              版本管理工具
+```
 
-1. 运行 `pnpm run version:app 0.9.1`，同步应用、原生组件与浏览器扩展版本。
-2. 提交并推送代码，在该提交上创建并发布 `v0.9.1` Release。标签须与应用版本完全一致。
-3. 等待 `Build Windows release` 工作流完成。它会向该 Release 附加桌面安装器、对应 `.blockmap`、`latest.yml` 和同版本浏览器扩展 ZIP。
-4. 首次手动安装 GitHub 构建的版本，软件会自动绑定该仓库的更新源。
+### 发布流程
 
-每次启动、重新打开托盘中的实例或从托盘打开窗口时检查更新；正在检查、下载或安装时复用当前操作。也可在「防护设置 → 软件更新」手动检查、下载，再确认「安装并重启」。安装会结束受保护程序，请先保存会话。关闭窗口或普通退出时保留已下载更新，等待下次主动安装。
+1. 运行 `pnpm run version:app 0.9.2`，同步应用、原生组件与扩展版本。
+2. 提交并推送代码，在对应提交发布同版本标签的 Release，例如 `v0.9.2`。
+3. 等待 [Build Windows release](https://github.com/chxcodepro/ip-guard/actions/workflows/release.yml) 工作流完成，安装器、扩展 ZIP 与更新元数据将自动附加到 Release。
 
-本地安装包未绑定仓库时显示「GitHub 更新源未配置」，请安装 Releases 提供的版本。构建流程使用 [electron-updater](https://www.electron.build/docs/features/auto-update/) 的 GitHub provider 与 NSIS 更新元数据。
+GitHub 构建自动绑定当前仓库更新源。更新记录见 [CHANGELOG.zh.md](CHANGELOG.zh.md)。
 
-主要源码：
+## 反馈与贡献
 
-- `apps/desktop/native/`：IFEO、Job、网络监控、防火墙、登录任务、恢复。
-- `apps/desktop/native/LaunchWindow.cs`、`LaunchGate.cs`：独立启动浮窗与挂起、租约、恢复执行。
-- `apps/desktop/native/TerminalProcess.cs`：控制台门卫、标准句柄继承与退出码。
-- `apps/desktop/native/PackagePolicy.cs`：保留 MSIX 身份的启动、接管与恢复。
-- `apps/desktop/src/main/`：守护器通信、权限重启、托盘与窗口。
-- `apps/desktop/src/main/coffee.ts`：独立的 Net.Coffee 数据采集。
-- `apps/desktop/src/main/presets.ts`：Claude CLI 与 Desktop 安装路径发现。
-- `apps/desktop/src/main/claude-ip.ts`：唯一 Claude AI 出口 IPv4 生产者，使用系统代理。
-- `apps/desktop/native/ClaudeProbe.cs`：原生校验向主进程请求新结果，验证地址及新鲜度。
-- `apps/desktop/src/main/claude-processes.ts`：当前用户 Claude 进程查询与确认后的树终止。
-- `apps/desktop/src/main/updates.ts`：GitHub 更新状态、下载与确认安装。
-- `apps/desktop/src/main/browser-installation.ts`：Chrome / Edge 扩展安装记录查询。
-- `.github/workflows/release.yml`：Release 发布后的 Windows 构建与附件上传。
-- `packages/electron/src/index.ts`：IPC Schema 与类型。
-- `apps/web/src/components/guard-app.tsx`、`apps/web/src/guard.css`：双主题操作界面。
-- `apps/web/src/components/coffee-page.tsx`：只读诊断、本机信息与 UDP 检测。
-- `apps/web/src/components/claude-control.tsx`：停止按钮与运行状态。
+欢迎通过 [Issues](https://github.com/chxcodepro/ip-guard/issues) 反馈问题，或提交 Pull Request。
 
-守护异常退出的代码、错误信息和标准错误尾部保存在 `%LOCALAPPDATA%/IPGuard/guardian-errors.log`。
+反馈时请提供软件版本、Windows 版本、目标程序及安装方式、复现步骤和相关日志。提交前请移除 API 密钥、令牌、个人 IP 等敏感信息。
 
-Windows API 依据：[MSIX 调试生命周期](https://learn.microsoft.com/en-us/windows/msix/desktop/desktop-to-uwp-debug)、[IPackageDebugSettings](https://learn.microsoft.com/en-us/windows/win32/api/shobjidl_core/nn-shobjidl_core-ipackagedebugsettings)。
+## 友情链接
 
-## 验证状态
-
-0.9.0 已完成编译打包、修改范围 TypeScript / lint 与双主题界面检查。新控制台门卫通过现有守护校验后，将 Claude 版本输出回原 PowerShell 通道，完整路径与别名调用均返回 0。安装状态读取识别到本机 Chrome 扩展。未执行测试套件。
-
-Pebrel 完整交互、独立原生 Claude 的实际启动、地址切换时的既有页面终止、开机登录、卸载恢复及软件内更新安装仍待目标环境联动验收。安装新版前请保存受保护程序中的内容。
-
-Windows API 依据：[IFEO 启动转交](https://devblogs.microsoft.com/oldnewthing/20070702-00/?p=26193)、[Job Objects](https://learn.microsoft.com/en-us/windows/win32/procthread/job-objects)、[路径过滤与调试创建机制](https://diversenok.github.io/2021/02/26/IFEO.html)。
+- [LINUX DO](https://linux.do/)
