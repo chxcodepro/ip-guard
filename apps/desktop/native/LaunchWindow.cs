@@ -28,7 +28,8 @@ namespace IpGuard {
         readonly Color ink,muted,line,surface,soft,green,greenSoft,red,amber;
         readonly bool motion;
         readonly float scale;
-        readonly Button ackButton,firewallButton,closeButton,ipButton;
+        readonly Button ackButton,firewallButton,closeButton,ipButton,openAppButton;
+        readonly bool notification;
         bool ipsVisible;
         string description="";
         string name, currentIp="", expectedIp="", reason="", phase="running";
@@ -42,7 +43,8 @@ namespace IpGuard {
         [DllImport("user32.dll")] static extern IntPtr SendMessage(IntPtr hwnd,uint message,IntPtr wparam,IntPtr lparam);
         [DllImport("shell32.dll",CharSet=CharSet.Unicode)] static extern int SetCurrentProcessExplicitAppUserModelID(string id);
         public static void ConfigureApplication() { SetProcessDPIAware(); SetCurrentProcessExplicitAppUserModelID("IPGuard.Startup"); Application.EnableVisualStyles(); Application.SetCompatibleTextRenderingDefault(false); }
-        public LaunchWindow(string appName) {
+        public LaunchWindow(string appName,bool notification=false) {
+            this.notification=notification;
             name=appName;
             bool animate; motion=!SystemParametersInfo(0x1042,0,out animate,0) || animate;
             bool dark=false;
@@ -68,9 +70,13 @@ namespace IpGuard {
             ipButton=CreateButton("显示 IP",new RectangleF(535,21,86,27),surface,muted); ipButton.AccessibleName="显示 IP 地址";
             ipButton.Click+=(sender,args)=>{ipsVisible=!ipsVisible; ipButton.Text=ipsVisible ? "隐藏 IP" : "显示 IP"; ipButton.AccessibleName=ipsVisible ? "隐藏 IP 地址" : "显示 IP 地址"; AccessibleDescription=Display(description); Invalidate();};
             VisibleChanged+=(sender,args)=>{if(!Visible) {ipsVisible=false; ipButton.Text="显示 IP"; ipButton.AccessibleName="显示 IP 地址"; AccessibleDescription=Display(description);}};
-            AcceptButton=ackButton; AccessibleName="IP Guard 启动校验";
+            openAppButton=CreateButton("打开 IP Guard",Firewall,soft,green);openAppButton.Visible=false;
+            openAppButton.Click+=(sender,args)=>{Console.WriteLine("open");Console.Out.Flush();Close();};
+            if(notification) {Text="IP Guard · 防护提醒";closeButton.AccessibleName="关闭防护提醒";}
+            AcceptButton=ackButton; AccessibleName=notification ? "IP Guard 防护提醒" : "IP Guard 启动校验";
             timer.Tick+=(sender,args)=>TickScene(); Shown+=(sender,args)=>{clock.Restart(); timer.Start();};
         }
+        public LaunchWindow(ProtectionNotice notice) : this("防护提醒",true) { ApplyProtectionNotice(notice); }
         Button CreateButton(string label,RectangleF rect,Color background,Color foreground) {
             Button button=new Button { Text=label, AccessibleName=label, FlatStyle=FlatStyle.Flat, BackColor=background, ForeColor=foreground, Font=buttonFont,
                 Bounds=new Rectangle((int)(rect.X*scale),(int)(rect.Y*scale),(int)(rect.Width*scale),(int)(rect.Height*scale)), UseVisualStyleBackColor=false, Cursor=Cursors.Hand };
@@ -121,6 +127,23 @@ namespace IpGuard {
         public void End() { Post(()=>{if(phase!="blocked") { finishing=true; Close(); }}); }
         public void Cancel() { if(cancelled) return; cancelled=true; released.TrySetResult(false); Action action=CancelRequested; if(action!=null) action(); }
         public void CancelFromTerminal() { Cancel(); Post(()=>{finishing=true; Close();}); }
+        public void CloseFromOwner() { Post(()=>{finishing=true; Close();}); }
+        public void ShowProtectionNotice(ProtectionNotice data) {
+            Post(()=>{
+                ApplyProtectionNotice(data);
+                if(!Visible) Show();Activate();ackButton.Focus();Invalidate();
+            });
+        }
+        void ApplyProtectionNotice(ProtectionNotice data) {
+                ipsVisible=false;ipButton.Text="显示 IP";ipButton.AccessibleName="显示 IP 地址";
+                name=data.kind=="ip_changed" ? "检测到出口地址变化" : data.kind=="guard_offline" ? "守护连接已中断" : "公网 IPv4 检测暂不可用";
+                currentIp=data.currentIp;expectedIp=data.expectedIp;phase="blocked";
+                reason=data.kind=="ip_changed" ? "当前出口与锁定地址不同。恢复允许的网络后，请手动重新启动。" : data.kind=="guard_offline" ? "为保护连接，已停止受控程序。请先重启 IP Guard，再启动程序。" : "暂时无法确认公网 IPv4。网络恢复并通过校验后，请手动重新启动。";
+                steps.Clear();int count=Math.Min(data.apps.Length,6);
+                for(int i=0;i<count;i++) steps.Add(new Step {id="app-"+i,label=i==5 && data.apps.Length>6 ? "另有 "+(data.apps.Length-5)+" 个程序" : data.apps[i],status="ok",detail="进程树已结束",appeared=clock.Elapsed.TotalMilliseconds-200});
+                completed=clock.Elapsed.TotalMilliseconds;Describe(name+"。已停止："+String.Join("、",data.apps)+"。"+reason+"。当前 IP："+currentIp+"，锁定 IP："+expectedIp);
+                ackButton.Visible=true;firewallButton.Visible=false;openAppButton.Visible=true;Opacity=1;timer.Start();
+        }
         void TickScene() {
             double now=clock.Elapsed.TotalMilliseconds;
             if(Visible && phase=="running" && motion) Opacity=Math.Min(1,now/160);
@@ -162,7 +185,7 @@ namespace IpGuard {
             Label(g,"IP GUARD",brandFont,ink,new RectangleF(60,22,110,27));
             Label(g,name,textFont,muted,new RectangleF(180,22,340,27));
             using(Pen separator=new Pen(line,1)) { g.DrawLine(separator,24,68,656,68); g.DrawLine(separator,224,92,224,340); }
-            Label(g,"启动校验",textFont,muted,new RectangleF(27,86,170,24));
+            Label(g,notification ? "已停止的程序" : "启动校验",textFont,muted,new RectangleF(27,86,170,24));
             for(int i=0;i<steps.Count && i<6;i++) {
                 Step s=steps[i]; double elapsed=clock.Elapsed.TotalMilliseconds-s.appeared; if(elapsed<0) continue;
                 float reveal=motion ? (float)Math.Min(1,elapsed/150) : 1;
@@ -191,7 +214,7 @@ namespace IpGuard {
             } else {
                 using(Pen pen=new Pen(red,3) { StartCap=LineCap.Round, EndCap=LineCap.Round }) { g.DrawLine(pen,442,144,442,166); g.DrawEllipse(pen,440.5f,177,3,3); }
             }
-            Label(g,phase=="running" ? "正在核验网络" : phase=="complete" ? "允许启动" : "启动已阻断",headingFont,ink,new RectangleF(250,233,385,34),StringAlignment.Center);
+            Label(g,notification ? "受保护程序已停止" : phase=="running" ? "正在核验网络" : phase=="complete" ? "允许启动" : "启动已阻断",headingFont,ink,new RectangleF(250,233,385,34),StringAlignment.Center);
             Label(g,currentIp=="" ? (phase=="blocked" ? "未取得公网 IPv4" : "正在获取公网 IPv4") : currentIp,currentIp=="" ? textFont : ipFont,currentIp=="" ? muted : ink,new RectangleF(250,276,385,34),StringAlignment.Center);
             Label(g,"锁定 IP  ·  "+(expectedIp=="" ? "未取得" : expectedIp),textFont,muted,new RectangleF(250,314,385,24),StringAlignment.Center);
             if(phase=="blocked") {

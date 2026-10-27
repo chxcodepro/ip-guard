@@ -1,6 +1,6 @@
 import path from "node:path";
 
-import { app, BrowserWindow, dialog, Menu, nativeImage, Notification, Tray } from "electron";
+import { app, BrowserWindow, dialog, Menu, nativeImage, Tray } from "electron";
 
 import { rendererOrigin } from "@ip-guard/electron";
 
@@ -10,6 +10,7 @@ import { CoffeeDiagnostics } from "#src/main/coffee.ts";
 import { defaultApiOrigin } from "#src/main/config.ts";
 import { Guardian } from "#src/main/guardian.ts";
 import { setupIpc } from "#src/main/ipc.ts";
+import { ProtectionAlerts } from "#src/main/protection-alerts.ts";
 import { parseHttpOrigin, parseLoopbackOrigin } from "#src/main/renderer-route.ts";
 import { serveRenderer } from "#src/main/renderer.ts";
 import { ApplicationUpdates } from "#src/main/updates.ts";
@@ -43,6 +44,14 @@ const claude = new ClaudeIPv4();
 const guardian = new Guardian(claude);
 const browserBridge = new BrowserBridge(guardian);
 const coffee = new CoffeeDiagnostics(claude);
+const protectionAlerts = new ProtectionAlerts(guardian, () => {
+  const [win] = BrowserWindow.getAllWindows();
+  if (win) {
+    win.show();
+    if (win.isMinimized()) win.restore();
+    win.focus();
+  }
+});
 let quitting = false;
 let quittingNative = false;
 let quittingForUpdate = false;
@@ -123,17 +132,8 @@ const start = () => {
     ]),
   );
   tray.on("double-click", show);
-  let prior = "";
   guardian.on("snapshot", (snapshot) => {
     tray?.setToolTip(`IP Guard · ${snapshot.ready ? "IPv4 匹配" : snapshot.reason}`.slice(0, 120));
-    if (
-      snapshot.reason &&
-      snapshot.reason !== prior &&
-      snapshot.apps.some((target: { enabled: boolean }) => target.enabled)
-    ) {
-      new Notification({ title: "IP Guard · 已阻断", body: snapshot.reason }).show();
-    }
-    prior = snapshot.reason;
   });
 };
 
@@ -159,6 +159,7 @@ if (app.requestSingleInstanceLock()) {
     event.preventDefault();
     if (quitting) return;
     quitting = true;
+    protectionAlerts.stop();
     browserBridge.close();
     coffee.stop();
     void guardian.stop().finally(() => {

@@ -8,7 +8,7 @@ namespace IpGuard {
         [MTAThread] public static int Main(string[] args) {
             if(args.Length>0 && args[0].StartsWith("chrome-extension://",StringComparison.Ordinal)) return BrowserHost.Run(args[0]);
             try {
-                if(args.Length>0 && (args[0]=="guard" || args[0]=="version")) {
+                if(args.Length>0 && (args[0]=="guard" || args[0]=="version" || args[0]=="notice")) {
                     Console.SetIn(new StreamReader(Console.OpenStandardInput(),new UTF8Encoding(false)));
                     Console.SetOut(new StreamWriter(Console.OpenStandardOutput(),new UTF8Encoding(false)) { AutoFlush=true });
                     Console.SetError(new StreamWriter(Console.OpenStandardError(),new UTF8Encoding(false)) { AutoFlush=true });
@@ -16,6 +16,7 @@ namespace IpGuard {
                 if(args.Length>0 && args[0]=="version") {
                     Console.WriteLine(Data.Json().Serialize(new { version=BuildInfo.Version,protocol=BuildInfo.Protocol })); return 0;
                 }
+                if(args.Length==1 && args[0]=="notice") return ProtectionNotice.Run();
                 if(args.Length>0 && (args[0]=="gate" || args[0]=="package-gate")) {
                     int result=1; Exception failure=null;
                     Thread ui=new Thread(()=>{try { result=LaunchGate.Run(args,args[0]=="package-gate"); } catch(Exception e) { failure=e; }});

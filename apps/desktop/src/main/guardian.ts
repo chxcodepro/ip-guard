@@ -50,6 +50,9 @@ export class Guardian extends EventEmitter {
   private helloTimer: ReturnType<typeof setTimeout> | undefined;
   private child: ReturnType<typeof spawn> | undefined;
   private stopping = false;
+  get isStopping() {
+    return this.stopping;
+  }
   private stderr = "";
   private pending = new Map<
     string,
