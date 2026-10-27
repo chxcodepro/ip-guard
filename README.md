@@ -74,7 +74,13 @@ IPv6 使用独立的 IPv6 请求检测公网、Cloudflare 和 Claude 出口，�
 
 颜色按站点公开规则呈现：绿色正常、蓝色提示、黄色需核查、红色异常、灰色未知。信任分按 95/80/50/25 分段；受限地区、机房与安全属性分别标记。DNS 依据中国解析器与非中国 Claude 出口组合，UDP 依据公网 IPv4 候选与 Claude 出口不一致标记；时区容差为 1 小时，中国大陆时区单独提示。连接延迟达到 500ms 标黄。异常行同时提供图标和文字。
 
-浏览器访问 `claude.ai` 的域名防护按用户决定暂缓；当前版本保持系统代理与浏览器设置不变。
+## 浏览器防护
+
+0.8.0 起提供 Chrome / Edge 扩展，按同一个锁定 IPv4 保护 `claude.ai` 及子域。IP 不匹配、检测失败、未锁定或守护离线时阻断请求，并将已有 Claude 页面切换到本地结果页；未发送内容可能丢失。
+
+安装新版桌面程序后，在设置中点击「准备浏览器扩展」，再到浏览器扩展管理页开启开发者模式并加载打开的文件夹。也可加载 Releases 中插件 ZIP 解压后的目录。扩展显示匹配后点击「返回 Claude」。[完整安装步骤](apps/browser-extension/README.md)。
+
+浏览器连接使用 Native Messaging，不接管系统代理。保留现有 Claude 会话时，可先下载安装包与插件，保存会话后再安装。
 
 ## 解除防护与恢复
 
@@ -108,9 +114,9 @@ npx --yes pnpm@12.15.0 exec vp run package:desktop
 
 在 [chxcodepro/ip-guard](https://github.com/chxcodepro/ip-guard) 发布稳定版 Release，即可触发 Windows 安装包构建：
 
-1. 运行 `pnpm run version:app 0.7.1`，同步应用与原生组件版本。
-2. 提交并推送代码，在该提交上创建并发布 `v0.7.1` Release。标签须与应用版本完全一致。
-3. 等待 `Build Windows release` 工作流完成。它会向该 Release 附加 `IP-Guard-Setup-0.7.1.exe`、对应 `.blockmap` 和 `latest.yml`。
+1. 运行 `pnpm run version:app 0.8.1`，同步应用、原生组件与浏览器扩展版本。
+2. 提交并推送代码，在该提交上创建并发布 `v0.8.1` Release。标签须与应用版本完全一致。
+3. 等待 `Build Windows release` 工作流完成。它会向该 Release 附加桌面安装器、对应 `.blockmap`、`latest.yml` 和同版本浏览器扩展 ZIP。
 4. 首次手动安装 GitHub 构建的版本，软件会自动绑定该仓库的更新源。
 
 之后软件启动时检查更新，也可在「防护设置 → 软件更新」手动检查、下载，再确认「安装并重启」。安装会结束受保护程序，请先保存会话。关闭窗口或普通退出时保留已下载更新，等待下次主动安装。
@@ -141,8 +147,8 @@ Windows API 依据：[MSIX 调试生命周期](https://learn.microsoft.com/en-us
 
 ## 验证状态
 
-0.7.0 已完成编译打包、修改范围的 TypeScript 静态检查与双主题只读界面检查，未执行测试套件。模板界面断言已按用户授权同步，未运行。
+0.8.0 已完成编译打包、修改范围的 TypeScript / lint 检查及双主题界面检查。独立 Chromium 已实际加载扩展，确认守护离线时默认跳转本地阻断页。未执行测试套件；模板界面断言已按用户授权同步，未运行。
 
-真实 EXE 接管、断网/切网终止、开机登录、卸载恢复及软件内更新安装仍待目标环境联动验收。安装新版前请保存受保护程序中的内容。
+真实 EXE 接管、浏览器与管理员守护连接、地址切换时的既有页面终止、开机登录、卸载恢复及软件内更新安装仍待目标环境联动验收。安装新版前请保存受保护程序中的内容。
 
 Windows API 依据：[IFEO 启动转交](https://devblogs.microsoft.com/oldnewthing/20070702-00/?p=26193)、[Job Objects](https://learn.microsoft.com/en-us/windows/win32/procthread/job-objects)、[路径过滤与调试创建机制](https://diversenok.github.io/2021/02/26/IFEO.html)。

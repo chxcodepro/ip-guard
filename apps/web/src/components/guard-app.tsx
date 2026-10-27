@@ -1021,6 +1021,28 @@ export function GuardApp() {
                     </select>
                   </div>
                 </section>
+                <section className="panel settings-panel">
+                  <div className="panel-heading">
+                    <h2>浏览器防护</h2>
+                    <span className="subtle-label">CHROME / EDGE</span>
+                  </div>
+                  <div className="setting-row">
+                    <span className="setting-icon">
+                      <ShieldCheck size={19} />
+                    </span>
+                    <div>
+                      <strong>Claude 网页扩展</strong>
+                      <span>注册连接并打开扩展文件夹</span>
+                    </div>
+                    <button
+                      className="btn"
+                      disabled={busy || !available}
+                      onClick={() => void invoke({ action: "extension:setup" })}
+                    >
+                      准备浏览器扩展
+                    </button>
+                  </div>
+                </section>
                 <UpdatePanel />
                 <section className="panel settings-panel">
                   <div className="panel-heading">

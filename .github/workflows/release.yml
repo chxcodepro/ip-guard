@@ -42,6 +42,6 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ github.event.release.tag_name }}
         run: |
-          $assets = Get-ChildItem apps/desktop/release -File | Where-Object { $_.Name -match '^IP-Guard-Setup-.+\.exe(\.blockmap)?$|^latest\.yml$' }
+          $assets = Get-ChildItem apps/desktop/release -File | Where-Object { $_.Name -match '^IP-Guard-Setup-.+\.exe(\.blockmap)?$|^IP-Guard-Browser-.+\.zip$|^latest\.yml$' }
           if (-not ($assets.Name -contains 'latest.yml')) { throw 'Missing auto-update metadata' }
           gh release upload $env:RELEASE_TAG @($assets.FullName) --repo $env:GITHUB_REPOSITORY

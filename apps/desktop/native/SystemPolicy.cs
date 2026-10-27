@@ -136,6 +136,7 @@ namespace IpGuard {
         }
         public static void Recover() {
             RequireAdmin();
+            BrowserHost.Unregister();
             PackagePolicy.Recover();
             foreach (RegistryView view in Views) {
                 using (RegistryKey root = RegistryKey.OpenBaseKey(RegistryHive.LocalMachine, view))

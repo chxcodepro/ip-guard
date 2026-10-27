@@ -22,6 +22,10 @@ const messageSchema = z.object({
   data: z.unknown().optional(),
   version: z.string().optional(),
   protocol: z.number().int().optional(),
+  sid: z
+    .string()
+    .regex(/^S-1-\d+(?:-\d+)+$/)
+    .optional(),
 });
 export const nativePath = () =>
   app.isPackaged
@@ -89,12 +93,17 @@ export class Guardian extends EventEmitter {
         try {
           const message = messageSchema.parse(JSON.parse(line));
           if (message.type === "hello") {
-            if (message.version !== nativeVersion || message.protocol !== nativeProtocol) {
+            if (
+              message.version !== nativeVersion ||
+              message.protocol !== nativeProtocol ||
+              !message.sid
+            ) {
               this.fail(
                 `界面与原生组件版本不一致，需要 ${nativeVersion}，实际 ${message.version ?? "未知"}。`,
               );
               return;
             }
+            this.emit("identity", message.sid);
             this.send({ action: "initialize", version: nativeVersion, protocol: nativeProtocol });
             return;
           }

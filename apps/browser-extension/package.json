@@ -1,0 +1,17 @@
+{
+  "name": "@ip-guard/browser-extension",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "vp build"
+  },
+  "dependencies": {
+    "@ip-guard/electron": "workspace:*"
+  },
+  "devDependencies": {
+    "@ip-guard/config": "workspace:*",
+    "@types/chrome": "^0.3.6",
+    "typescript": "catalog:",
+    "vite-plus": "catalog:"
+  }
+}

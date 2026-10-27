@@ -1,0 +1,9 @@
+{
+  "extends": "@ip-guard/config/typescript/base.json",
+  "compilerOptions": {
+    "lib": ["ES2023", "DOM"],
+    "types": ["chrome", "node", "vite/client"],
+    "noEmit": true
+  },
+  "include": ["src", "vite.config.ts"]
+}

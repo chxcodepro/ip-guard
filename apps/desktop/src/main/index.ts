@@ -4,6 +4,7 @@ import { app, BrowserWindow, dialog, Menu, nativeImage, Notification, Tray } fro
 
 import { rendererOrigin } from "@ip-guard/electron";
 
+import { BrowserBridge } from "#src/main/browser-bridge.ts";
 import { ClaudeIPv4 } from "#src/main/claude-ip.ts";
 import { CoffeeDiagnostics } from "#src/main/coffee.ts";
 import { defaultApiOrigin } from "#src/main/config.ts";
@@ -40,6 +41,7 @@ if (apiOrigin === null) {
 
 const claude = new ClaudeIPv4();
 const guardian = new Guardian(claude);
+const browserBridge = new BrowserBridge(guardian);
 const coffee = new CoffeeDiagnostics(claude);
 let quitting = false;
 let quittingNative = false;
@@ -154,6 +156,7 @@ if (app.requestSingleInstanceLock()) {
     event.preventDefault();
     if (quitting) return;
     quitting = true;
+    browserBridge.close();
     coffee.stop();
     void guardian.stop().finally(() => {
       claude.stop();

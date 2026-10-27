@@ -1,0 +1,26 @@
+{
+  "manifest_version": 3,
+  "name": "IP Guard · Claude 防护",
+  "version": "0.8.0",
+  "description": "按 IP Guard 锁定的 Claude AI 出口 IPv4 保护 Claude 网页。",
+  "minimum_chrome_version": "120",
+  "icons": { "32": "icon.png" },
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAp1N/k4+eBtswN18mSgI0Hy6k5KyxaHDNZXGarn9E4Xqo5Qjf64cg1Thj5jn4F3k7QRwg8B035Lk17SKVMDLd6k0BnLrjzxWOZmXROC/VuowRTJJU3D7Hxraf4hXiHXvoWnOEbecXmhbdz15HVewTcOzQQuhTx0UKO2dKxF4DnVwYvxLjlYMLIPTcmDfL5ke5SW706sh8MVTy4KbiiGSr1B9ALrlY3CX0ZaB5/9IDYj9tPkoKw/rAp0VuWF6POL5Sv8YpnN7zsceLJp/k/F8JTY6sNVig7yL6DhB53jnI6C88nj1EAFa3uGfV/AlV1nRVIMakD0c3u7bnvw0/XO3P4wIDAQAB",
+  "permissions": ["nativeMessaging", "declarativeNetRequest", "storage", "alarms"],
+  "host_permissions": ["*://claude.ai/*", "*://*.claude.ai/*"],
+  "background": { "service_worker": "worker.js", "type": "module" },
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "IP Guard",
+    "default_icon": "icon.png"
+  },
+  "declarative_net_request": {
+    "rule_resources": [{ "id": "guard", "enabled": true, "path": "rules.json" }]
+  },
+  "web_accessible_resources": [
+    {
+      "resources": ["blocked.html", "chunks/*", "assets/*"],
+      "matches": ["*://claude.ai/*", "*://*.claude.ai/*"]
+    }
+  ]
+}

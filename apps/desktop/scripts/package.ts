@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { writeFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import path from "node:path";
 
@@ -23,4 +23,38 @@ const result = spawnSync(process.execPath, [cli, ...args], {
   stdio: "inherit",
 });
 if (result.error) throw result.error;
+if (result.status === 0) {
+  const metadata: unknown = JSON.parse(readFileSync(path.join(root, "package.json"), "utf8"));
+  if (
+    !metadata ||
+    typeof metadata !== "object" ||
+    !("version" in metadata) ||
+    typeof metadata.version !== "string"
+  )
+    throw new Error("Invalid package metadata");
+  const zip = spawnSync(
+    "powershell.exe",
+    [
+      "-NoProfile",
+      "-NonInteractive",
+      "-Command",
+      "$ErrorActionPreference='Stop'; Get-ChildItem -LiteralPath $env:IP_GUARD_EXTENSION_DIR | Compress-Archive -DestinationPath $env:IP_GUARD_EXTENSION_ZIP -Force",
+    ],
+    {
+      env: {
+        ...process.env,
+        IP_GUARD_EXTENSION_DIR: path.resolve(root, "../browser-extension/dist"),
+        IP_GUARD_EXTENSION_ZIP: path.join(
+          root,
+          "release",
+          `IP-Guard-Browser-${metadata.version}.zip`,
+        ),
+      },
+      windowsHide: true,
+      stdio: "inherit",
+    },
+  );
+  if (zip.error) throw zip.error;
+  if (zip.status !== 0) throw new Error("Browser extension archive failed");
+}
 process.exitCode = result.status ?? 1;

@@ -2,7 +2,12 @@ import { spawnSync } from "node:child_process";
 import { mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
-import { claudeIpv4Endpoint, nativeProtocol, nativeVersion } from "@ip-guard/electron";
+import {
+  browserExtensionId,
+  claudeIpv4Endpoint,
+  nativeProtocol,
+  nativeVersion,
+} from "@ip-guard/electron";
 
 if (process.platform !== "win32") throw new Error("Native guardian requires Windows.");
 const root = path.resolve(import.meta.dirname, "..");
@@ -19,6 +24,7 @@ writeFileSync(
 [assembly: AssemblyFileVersion("${nativeVersion}.0")]
 namespace IpGuard { public static class BuildInfo {
  public const string Version = ${JSON.stringify(nativeVersion)};
+ public const string ExtensionId = ${JSON.stringify(browserExtensionId)};
  public const int Protocol = ${nativeProtocol};
  public const string Endpoint = ${JSON.stringify(claudeIpv4Endpoint)};
 } }`,

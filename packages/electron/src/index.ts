@@ -1,7 +1,25 @@
 import { z } from "zod";
 
-export const nativeVersion = "0.7.0";
-export const nativeProtocol = 3;
+export const nativeVersion = "0.8.0";
+export const nativeProtocol = 4;
+export const browserExtensionId = "blmgamidelconfabgilaacbkokomegep";
+export const browserHostName = "com.ipguard.browser";
+export const browserStateSchema = z
+  .object({
+    protocol: z.literal(1),
+    appVersion: z.string(),
+    phase: z.enum(["allowed", "blocked", "offline", "unlocked", "checking"]),
+    currentIp: z.union([z.literal(""), z.ipv4()]),
+    expectedIp: z.union([z.literal(""), z.ipv4()]),
+    checkedAt: z.string(),
+    reason: z.string(),
+  })
+  .refine(
+    (value) =>
+      value.phase !== "allowed" || (value.currentIp !== "" && value.currentIp === value.expectedIp),
+    { message: "Invalid IPv4 permission" },
+  );
+export type BrowserState = z.infer<typeof browserStateSchema>;
 export const claudeIpv4Endpoint = "https://claude.ai/cdn-cgi/trace";
 
 export const desktopBridgeGlobal = "desktop";
@@ -144,6 +162,7 @@ export const commandSchema = z.discriminatedUnion("action", [
   z.object({ action: z.literal("update:download") }),
   z.object({ action: z.literal("update:install") }),
   z.object({ action: z.literal("update:releases") }),
+  z.object({ action: z.literal("extension:setup") }),
 ]);
 export type Settings = z.infer<typeof settingsSchema>;
 export type ProtectedApp = z.infer<typeof appSchema>;

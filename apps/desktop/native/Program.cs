@@ -6,6 +6,7 @@ using System.Threading;
 namespace IpGuard {
     public static class Program {
         [MTAThread] public static int Main(string[] args) {
+            if(args.Length>0 && args[0].StartsWith("chrome-extension://",StringComparison.Ordinal)) return BrowserHost.Run(args[0]);
             try {
                 if(args.Length>0 && (args[0]=="guard" || args[0]=="version")) {
                     Console.SetIn(new StreamReader(Console.OpenStandardInput(),new UTF8Encoding(false)));
@@ -31,7 +32,7 @@ namespace IpGuard {
                     if(!own) throw new Exception("IP Guard 正在运行，请先从托盘退出。");
                     if(args.Length>0 && args[0]=="recover") { SystemPolicy.Recover(); return 0; }
                     if(args.Length==0 || args[0]!="guard") throw new Exception("请通过 IP Guard 桌面程序启动。");
-                    Console.WriteLine(Data.Json().Serialize(new { type="hello",version=BuildInfo.Version,protocol=BuildInfo.Protocol })); Console.Out.Flush();
+                    Console.WriteLine(Data.Json().Serialize(new { type="hello",version=BuildInfo.Version,protocol=BuildInfo.Protocol,sid=SystemPolicy.Sid })); Console.Out.Flush();
                     string line=Console.ReadLine();
                     var initialize=line==null ? null : Data.Json().Deserialize<System.Collections.Generic.Dictionary<string,object>>(line);
                     if(initialize==null || initialize["action"] as string!="initialize" || initialize["version"] as string!=BuildInfo.Version || Convert.ToInt32(initialize["protocol"])!=BuildInfo.Protocol) throw new Exception("界面与原生组件版本不匹配，请完整升级后启动。");

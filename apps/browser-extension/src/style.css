@@ -1,0 +1,259 @@
+:root {
+  font-family: "Segoe UI", "Microsoft YaHei", sans-serif;
+  color-scheme: light;
+  --bg: #f3f6f3;
+  --surface: #fff;
+  --soft: #f2f6f3;
+  --ink: #192c23;
+  --muted: #65796e;
+  --line: #e0e8e2;
+  --green: #137e51;
+  --amber: #95651b;
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #111815;
+  --surface: #19231e;
+  --soft: #223129;
+  --ink: #e6efe9;
+  --muted: #99aea1;
+  --line: #2e4035;
+  --green: #79dbae;
+  --amber: #e7c17d;
+}
+* {
+  box-sizing: border-box;
+}
+body {
+  margin: 0;
+  color: var(--ink);
+  background: var(--bg);
+  font-size: 14px;
+}
+body[data-view="popup"] {
+  width: 360px;
+}
+main {
+  padding: 24px;
+  background: var(--surface);
+}
+body[data-view="blocked"] {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+}
+body[data-view="blocked"] main {
+  width: min(100%, 560px);
+  padding: 32px;
+  border: 1px solid var(--line);
+  border-radius: 20px;
+  box-shadow: 0 16px 64px #00000008;
+}
+header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.brand {
+  font-size: 17px;
+  font-weight: 700;
+  letter-spacing: -0.4px;
+}
+.brand small {
+  margin-left: 8px;
+  color: var(--muted);
+  font-size: 10px;
+  letter-spacing: 1px;
+  font-weight: 500;
+}
+button {
+  font: inherit;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px 14px;
+  background: var(--surface);
+  color: var(--ink);
+  cursor: pointer;
+  transition:
+    transform 150ms,
+    background 180ms;
+}
+button:hover:not(:disabled) {
+  background: var(--soft);
+}
+button:active:not(:disabled) {
+  transform: scale(0.98);
+}
+button:focus-visible {
+  outline: 3px solid var(--green);
+  outline-offset: 3px;
+}
+button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+button.quiet {
+  border: 0;
+  padding: 4px 8px;
+  font-size: 20px;
+  color: var(--muted);
+}
+.scene {
+  width: 88px;
+  height: 88px;
+  display: grid;
+  place-items: center;
+  position: relative;
+  margin: 28px auto 20px;
+  color: var(--amber);
+  background: var(--soft);
+  border-radius: 50%;
+}
+.shield {
+  width: 45px;
+  stroke: currentColor;
+  stroke-width: 2.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+body[data-view="popup"] .scene {
+  width: 72px;
+  height: 72px;
+  margin: 20px auto 16px;
+}
+.tick {
+  opacity: 0;
+  stroke-dasharray: 25;
+  stroke-dashoffset: 25;
+}
+body[data-phase="allowed"] .scene {
+  color: var(--green);
+}
+body[data-phase="allowed"] .tick {
+  opacity: 1;
+  animation: check 330ms ease-out forwards;
+}
+body[data-phase="checking"] .scene:after,
+body:not([data-phase]) .scene:after {
+  content: "";
+  position: absolute;
+  inset: -5px;
+  border: 2px solid transparent;
+  border-top-color: var(--green);
+  border-right-color: var(--green);
+  border-radius: 50%;
+  animation: orbit 1.4s linear infinite;
+}
+h1 {
+  font-size: 24px;
+  text-align: center;
+  margin: 0;
+  letter-spacing: -0.6px;
+}
+#reason {
+  color: var(--muted);
+  line-height: 1.7;
+  text-align: center;
+  margin: 10px 0 24px;
+  min-height: 24px;
+  overflow-wrap: anywhere;
+}
+dl {
+  background: var(--soft);
+  border-radius: 12px;
+  padding: 18px;
+  margin: 0 0 20px;
+}
+dl > div + div {
+  margin-top: 16px;
+}
+dt {
+  color: var(--muted);
+  font-size: 12px;
+  margin-bottom: 7px;
+}
+dd {
+  margin: 0;
+  font-family: Consolas, monospace;
+  font-size: 22px;
+  overflow-wrap: anywhere;
+}
+dl > div + div dd {
+  font-size: 15px;
+  color: var(--muted);
+}
+ol {
+  list-style: none;
+  padding: 0;
+  margin: 0 0 22px;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px 22px;
+  font-size: 12px;
+}
+li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  color: var(--muted);
+}
+li[data-done="true"] span {
+  color: var(--green);
+}
+.actions {
+  display: flex;
+  gap: 10px;
+}
+.actions button {
+  flex: 1;
+}
+button.primary {
+  background: var(--green);
+  color: var(--surface);
+  border-color: var(--green);
+}
+button.primary:hover:not(:disabled) {
+  background: var(--green);
+  filter: brightness(0.96);
+}
+footer {
+  margin-top: 20px;
+  display: flex;
+  justify-content: space-between;
+  color: var(--muted);
+  font-size: 11px;
+  gap: 8px;
+}
+@keyframes orbit {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@keyframes check {
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+@media (max-width: 420px) {
+  body[data-view="blocked"] {
+    padding: 12px;
+  }
+  body[data-view="blocked"] main {
+    padding: 24px;
+  }
+  .brand small {
+    display: block;
+    margin: 4px 0 0;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *:after {
+    animation: none !important;
+    transition: none !important;
+  }
+  body[data-phase="allowed"] .tick {
+    stroke-dashoffset: 0;
+  }
+}

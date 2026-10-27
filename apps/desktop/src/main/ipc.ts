@@ -42,6 +42,15 @@ export const setupIpc = (
     )
       throw new Error("Untrusted IPC sender");
     const command = commandSchema.parse(input);
+    if (command.action === "extension:setup") {
+      await guardian.request("browser:register");
+      const directory = app.isPackaged
+        ? path.join(process.resourcesPath, "browser-extension")
+        : path.resolve(import.meta.dirname, "../../../browser-extension/dist");
+      const error = await shell.openPath(directory);
+      if (error) throw new Error(error);
+      return {};
+    }
     if (command.action === "update:status") return { appUpdate: updates.state };
     if (command.action === "update:check") return { appUpdate: await updates.check() };
     if (command.action === "update:download") return { appUpdate: await updates.download() };

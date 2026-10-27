@@ -170,6 +170,8 @@ namespace IpGuard {
                     if(id==null || (id!="" && chosen==null)) throw new Exception("所选网卡当前不存在，请重新选择。");
                     lock(state) { config.networkAdapterId=id; config.networkAdapterName=chosen==null ? "" : chosen.name; }
                     Data.Save(config); RefreshAdapters();
+                } else if(action == "browser:register") {
+                    BrowserHost.Register();
                 } else if(action == "add") {
                     Target t = Data.Json().Deserialize<Target>(Data.Json().Serialize(input["app"])); Data.Validate(t, true);
                     if(config.apps.Count >= 30) throw new Exception("最多添加 30 个程序。");
@@ -316,6 +318,7 @@ namespace IpGuard {
             } catch(IOException e) { Log("info", "启动连接已关闭 · " + e.Message); }
         }
         public void Run() {
+            try { BrowserHost.Register(true); } catch(Exception error) { Log("error","浏览器连接注册失败 · "+error.Message); }
             if(config.apps.Any(t => t.enabled) && SystemPolicy.Admin) {
                 Trip("守护程序已启动，等待重新校验"); BlockPending();
                 foreach(Target t in config.apps.Where(t => t.enabled)) { Data.Validate(t,true); SystemPolicy.Intercept(t); }

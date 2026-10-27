@@ -1,0 +1,14 @@
+[
+  {
+    "id": 1,
+    "priority": 10,
+    "action": { "type": "block" },
+    "condition": { "requestDomains": ["claude.ai"] }
+  },
+  {
+    "id": 2,
+    "priority": 20,
+    "action": { "type": "redirect", "redirect": { "extensionPath": "/blocked.html" } },
+    "condition": { "requestDomains": ["claude.ai"], "resourceTypes": ["main_frame"] }
+  }
+]

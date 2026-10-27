@@ -9,6 +9,8 @@ files:
   - dist/preload/**/*
   - dist/renderer/**/*
 extraResources:
+  - from: ../browser-extension/dist
+    to: browser-extension
   - from: dist/native/${version}
     to: native/${version}
   - from: assets
