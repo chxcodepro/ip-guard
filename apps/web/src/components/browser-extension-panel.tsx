@@ -1,6 +1,8 @@
 import { LoaderCircle, RefreshCw, ShieldCheck } from "lucide-react";
 import { useEffect, useState } from "react";
+import { toast } from "sonner";
 
+import { isNewerExtensionVersion, nativeVersion } from "@ip-guard/electron";
 import type { ExtensionStatus } from "@ip-guard/electron";
 
 const labels = { running: "正在运行", installed: "已安装", missing: "未安装", unknown: "状态未知" };
@@ -17,6 +19,9 @@ export function BrowserExtensionPanel({
   const [status, setStatus] = useState<ExtensionStatus>({
     phase: "unknown",
     installedBrowsers: [],
+    outdatedBrowsers: [],
+    outdatedConnections: 0,
+    latestVersion: nativeVersion,
     connections: 0,
     error: "正在读取扩展状态",
   });
@@ -37,6 +42,9 @@ export function BrowserExtensionPanel({
           setStatus({
             phase: "unknown",
             installedBrowsers: [],
+            outdatedBrowsers: [],
+            outdatedConnections: 0,
+            latestVersion: nativeVersion,
             connections: 0,
             error:
               error instanceof Error
@@ -59,12 +67,17 @@ export function BrowserExtensionPanel({
       window.removeEventListener("focus", tick);
     };
   }, [bridge, revision]);
+  const updateAvailable = status.outdatedBrowsers.length > 0 || status.outdatedConnections > 0;
   return (
     <section className="panel settings-panel">
       <div className="panel-heading">
         <h2>浏览器防护</h2>
-        <span className={`small-status ${status.phase === "running" ? "good" : ""}`} role="status">
+        <span
+          className={`small-status ${updateAvailable ? "warning" : status.phase === "running" ? "good" : ""}`}
+          role="status"
+        >
           {labels[status.phase]}
+          {updateAvailable ? " · 插件待更新" : ""}
         </span>
       </div>
       <div className="setting-row">
@@ -84,6 +97,21 @@ export function BrowserExtensionPanel({
           </span>
         </div>
         <div className="update-actions">
+          {updateAvailable && (
+            <button
+              className="btn"
+              disabled={!bridge}
+              onClick={async () => {
+                try {
+                  await bridge?.invoke({ action: "update:releases" });
+                } catch {
+                  toast.error("打开更新页失败，请在 GitHub Releases 下载插件");
+                }
+              }}
+            >
+              下载插件
+            </button>
+          )}
           <button
             className="icon-btn"
             aria-label="刷新扩展状态"
@@ -107,7 +135,23 @@ export function BrowserExtensionPanel({
           </button>
         </div>
       </div>
-      {(status.phase === "missing" || guide) && (
+      {updateAvailable && (
+        <div className="extension-guide extension-update-guide" role="status">
+          <strong>
+            {status.outdatedBrowsers.join(" / ") || "已连接的浏览器"} · 插件可更新至 v
+            {status.latestVersion}
+          </strong>
+          <ol>
+            <li>
+              {isNewerExtensionVersion(status.latestVersion, nativeVersion)
+                ? "从 IP Guard 目录加载的扩展：先更新桌面程序，再到扩展管理页点击「重新加载」。"
+                : "从 IP Guard 目录加载的扩展：在扩展管理页点击「重新加载」。"}
+            </li>
+            <li>独立 ZIP：从 Releases 下载新版，解压覆盖原目录，再点击「重新加载」。</li>
+          </ol>
+        </div>
+      )}
+      {!updateAvailable && (status.phase === "missing" || guide) && (
         <div className="extension-guide">
           <ol>
             <li>

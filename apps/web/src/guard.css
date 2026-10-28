@@ -10,6 +10,7 @@
   --g-accent-soft: #e9f5f0;
   --g-danger: #b93d3d;
   --g-danger-soft: #fff0ee;
+  --g-warning: #916617;
   --g-shadow: 0 2px 6px #202b3403;
   --g-ease: cubic-bezier(0.22, 1, 0.36, 1);
 }
@@ -25,6 +26,7 @@
   --g-accent-soft: #1a342c;
   --g-danger: #f09891;
   --g-danger-soft: #3c2424;
+  --g-warning: #e7c17d;
   --g-shadow: 0 2px 6px #0000000c;
 }
 body {
@@ -666,6 +668,10 @@ input::placeholder {
 }
 .small-status.good {
   color: var(--g-accent);
+}
+.small-status.warning,
+.extension-update-guide strong {
+  color: var(--g-warning);
 }
 .app-path {
   font-size: 10px;

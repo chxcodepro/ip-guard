@@ -1,4 +1,4 @@
-import { browserHostName, browserStateSchema } from "@ip-guard/electron";
+import { browserHostName, browserStateSchema, isNewerExtensionVersion } from "@ip-guard/electron";
 import type { BrowserState } from "@ip-guard/electron";
 
 let state: BrowserState = {
@@ -61,7 +61,10 @@ function publish() {
                   id: 100,
                   priority: 1000,
                   action: { type: chrome.declarativeNetRequest.RuleActionType.ALLOW },
-                  condition: { requestDomains: ["claude.ai"] },
+                  condition: {
+                    requestDomains: ["claude.ai"],
+                    resourceTypes: Object.values(chrome.declarativeNetRequest.ResourceType),
+                  },
                 },
               ]
             : [],
@@ -70,8 +73,15 @@ function publish() {
       }
       if (!permit) await blockTabs();
       await chrome.storage.session.set({ state, receivedAt: Date.now() });
-      await chrome.action.setBadgeText({ text: permit ? "" : "!" });
-      await chrome.action.setBadgeBackgroundColor({ color: permit ? "#137e51" : "#a6691a" });
+      const latest = state.latestExtensionVersion ?? state.appVersion;
+      const update = isNewerExtensionVersion(latest, chrome.runtime.getManifest().version);
+      await chrome.action.setBadgeText({ text: !permit ? "!" : update ? "↑" : "" });
+      await chrome.action.setBadgeBackgroundColor({
+        color: !permit || update ? "#a6691a" : "#137e51",
+      });
+      await chrome.action.setTitle({
+        title: `IP Guard${!permit ? " · 访问已阻断" : ""}${update ? ` · 插件有更新 v${latest}` : ""}`,
+      });
     })
     .catch(async (error: unknown) => {
       state = offline(error instanceof Error ? error.message : "浏览器规则更新失败");
@@ -114,7 +124,11 @@ function connect() {
     void publish();
     reconnect = setTimeout(connect, 3000);
   });
-  next.postMessage({ action: "watch", protocol: 1 });
+  next.postMessage({
+    action: "watch",
+    protocol: 1,
+    extensionVersion: chrome.runtime.getManifest().version,
+  });
 }
 chrome.runtime.onMessage.addListener((input: unknown, sender, reply) => {
   if (sender.id !== chrome.runtime.id || !input || typeof input !== "object") return;

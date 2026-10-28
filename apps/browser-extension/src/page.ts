@@ -1,4 +1,4 @@
-import { browserStateSchema, formatIPText } from "@ip-guard/electron";
+import { browserStateSchema, formatIPText, isNewerExtensionVersion } from "@ip-guard/electron";
 
 import "./style.css";
 
@@ -6,6 +6,7 @@ const app = document.getElementById("app");
 if (!app) throw new Error("Missing page root");
 const blocked = document.body.dataset.view === "blocked";
 app.innerHTML = `<header><span class="brand">IP Guard <small>CLAUDE 防护</small></span><div class="header-actions"><button id="ip-visibility" class="quiet" aria-label="显示 IP 地址" title="显示 IP 地址" aria-pressed="false"></button><button id="theme" class="quiet" aria-label="切换深浅主题">◐</button></div></header>
+<section id="extension-update" class="extension-update" hidden aria-live="polite"><strong id="update-version"></strong><a id="update-download" target="_blank" rel="noopener">下载插件</a><p>更新扩展文件后，在扩展管理页点击<span>「重新加载」</span>。</p></section>
 <div class="scene"><svg class="shield" viewBox="0 0 48 48" fill="none" aria-hidden="true"><path d="M24 6 39 12v12c0 9-7 15-15 18C16 39 9 33 9 24V12Z"/><path class="tick" d="m17 24 5 5 10-11"/></svg></div>
 <h1 id="status" role="status">连接中</h1><p id="reason"></p>
 <dl><div><dt>Claude AI 出口 IPv4</dt><dd id="current">—</dd></div><div><dt>锁定 IPv4</dt><dd id="expected">—</dd></div></dl>
@@ -60,6 +61,19 @@ async function render() {
   const state = parsed.success ? parsed.data : undefined;
   const fresh = typeof saved.receivedAt === "number" && Date.now() - saved.receivedAt < 3500;
   const phase = fresh && state ? state.phase : "offline";
+  const installedVersion = chrome.runtime.getManifest().version;
+  const latestVersion = state?.latestExtensionVersion ?? state?.appVersion ?? "";
+  const updateAvailable = isNewerExtensionVersion(latestVersion, installedVersion);
+  document.body.dataset.update = String(updateAvailable);
+  element("extension-update").hidden = !updateAvailable;
+  const updateLabel = updateAvailable ? `插件有更新 v${latestVersion}` : "";
+  const updateHeading = element("update-version");
+  if (updateHeading.textContent !== updateLabel) updateHeading.textContent = updateLabel;
+  if (updateAvailable)
+    element("update-download").setAttribute(
+      "href",
+      `https://github.com/chxcodepro/ip-guard/releases/download/v${latestVersion}/IP-Guard-Browser-${latestVersion}.zip`,
+    );
   permitted = phase === "allowed";
   document.body.dataset.phase = phase;
   element("status").textContent = permitted
@@ -73,7 +87,7 @@ async function render() {
   );
   element("current").textContent = formatIPText(state?.currentIp || "—", ipsVisible);
   element("expected").textContent = formatIPText(state?.expectedIp || "—", ipsVisible);
-  element("version").textContent = state?.appVersion ? `v${state.appVersion}` : "";
+  element("version").textContent = `插件 v${installedVersion}`;
   const date = state?.checkedAt ? new Date(state.checkedAt) : undefined;
   element("time").textContent =
     date && Number.isFinite(date.getTime())

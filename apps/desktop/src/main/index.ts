@@ -42,7 +42,6 @@ if (apiOrigin === null) {
 
 const claude = new ClaudeIPv4();
 const guardian = new Guardian(claude);
-const browserBridge = new BrowserBridge(guardian);
 const coffee = new CoffeeDiagnostics(claude);
 const protectionAlerts = new ProtectionAlerts(guardian, () => {
   const [win] = BrowserWindow.getAllWindows();
@@ -63,6 +62,7 @@ const updates = new ApplicationUpdates(
     quittingForUpdate = false;
   },
 );
+const browserBridge = new BrowserBridge(guardian, updates);
 let tray: Tray | undefined;
 const background = process.argv.includes("--background");
 

@@ -4,6 +4,8 @@ using System.IO;
 using System.IO.Pipes;
 using System.Text;
 using System.Threading.Tasks;
+using System.Linq;
+using System.Text.RegularExpressions;
 using Microsoft.Win32;
 
 namespace IpGuard {
@@ -44,8 +46,11 @@ namespace IpGuard {
                     if(size==0 || size>16384) return 1;
                     var request=Data.Json().Deserialize<Dictionary<string,object>>(Encoding.UTF8.GetString(Read(input,(int)size)));
                     if(request==null || !request.ContainsKey("action") || request["action"] as string!="watch" || !request.ContainsKey("protocol") || Convert.ToInt32(request["protocol"])!=1) return 1;
-                    using(NamedPipeClientStream pipe=new NamedPipeClientStream(".","IPGuard-Browser-"+SystemPolicy.Sid,PipeDirection.In,PipeOptions.Asynchronous)) {
+                    string version=request.ContainsKey("extensionVersion") ? request["extensionVersion"] as string : "";
+                    if(version==null || (version!="" && (!Regex.IsMatch(version,@"^\d{1,5}(?:\.\d{1,5}){1,3}$") || version.Split('.').Any(part=>Int32.Parse(part)>65535)))) return 1;
+                    using(NamedPipeClientStream pipe=new NamedPipeClientStream(".","IPGuard-Browser-"+SystemPolicy.Sid,PipeDirection.InOut,PipeOptions.Asynchronous)) {
                         pipe.Connect(2000);
+                        byte[] metadata=Encoding.UTF8.GetBytes(Data.Json().Serialize(new { extensionVersion=version })+"\n");pipe.Write(metadata,0,metadata.Length);pipe.Flush();
                         Task.Run(()=>{try { while(input.ReadByte()!=-1) { } } catch(IOException) { } finally { pipe.Dispose(); }});
                         using(StreamReader reader=new StreamReader(pipe,new UTF8Encoding(false),false,1024,true)) {
                             while(true) {

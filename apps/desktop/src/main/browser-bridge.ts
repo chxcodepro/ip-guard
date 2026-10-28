@@ -1,27 +1,41 @@
 import { createServer } from "node:net";
 import type { Server, Socket } from "node:net";
 
-import { nativeVersion } from "@ip-guard/electron";
+import { z } from "zod";
+
+import { extensionVersionSchema, isNewerExtensionVersion, nativeVersion } from "@ip-guard/electron";
 import type { BrowserState, ExtensionStatus } from "@ip-guard/electron";
 
 import { browserInstallations } from "#src/main/browser-installation.ts";
 import type { Guardian } from "#src/main/guardian.ts";
+import type { ApplicationUpdates } from "#src/main/updates.ts";
+
+const clientSchema = z
+  .object({ extensionVersion: z.union([z.literal(""), extensionVersionSchema]) })
+  .strict();
 
 export class BrowserBridge {
   private server: Server | undefined;
-  private clients = new Set<Socket>();
+  private clients = new Map<Socket, string | undefined>();
   private timer: ReturnType<typeof setInterval> | undefined;
   private guardian: Guardian;
-  constructor(guardian: Guardian) {
+  private updates: ApplicationUpdates;
+  constructor(guardian: Guardian, updates: ApplicationUpdates) {
     this.guardian = guardian;
+    this.updates = updates;
     guardian.on("identity", (sid: string) => this.listen(sid));
     guardian.on("snapshot", () => this.publish());
+  }
+  private latestVersion() {
+    const candidate = this.updates.state.latestVersion;
+    return isNewerExtensionVersion(candidate, nativeVersion) ? candidate : nativeVersion;
   }
   private state(): BrowserState {
     const value = this.guardian.snapshot;
     const base: BrowserState = {
       protocol: 1,
       appVersion: nativeVersion,
+      latestExtensionVersion: this.latestVersion(),
       phase: "offline",
       currentIp: value?.currentIp ?? "",
       expectedIp: value?.settings.expectedIp ?? "",
@@ -54,8 +68,25 @@ export class BrowserBridge {
         socket.destroy();
         return;
       }
-      this.clients.add(socket);
-      socket.on("data", () => socket.destroy());
+      this.clients.set(socket, undefined);
+      let input = "";
+      let received = false;
+      socket.setEncoding("utf8");
+      socket.on("data", (chunk: string) => {
+        input += chunk;
+        if (received || Buffer.byteLength(input, "utf8") > 512) {
+          socket.destroy();
+          return;
+        }
+        if (!input.includes("\n")) return;
+        try {
+          const value: unknown = JSON.parse(input);
+          this.clients.set(socket, clientSchema.parse(value).extensionVersion);
+          received = true;
+        } catch {
+          socket.destroy();
+        }
+      });
       socket.on("error", () => socket.destroy());
       socket.on("close", () => this.clients.delete(socket));
       this.send(socket);
@@ -77,13 +108,21 @@ export class BrowserBridge {
     socket.write(`${JSON.stringify(this.state())}\n`);
   }
   private publish() {
-    for (const socket of this.clients) this.send(socket);
+    for (const socket of this.clients.keys()) this.send(socket);
   }
   async status(): Promise<ExtensionStatus> {
-    const info = await browserInstallations();
+    const latestVersion = this.latestVersion();
+    const info = await browserInstallations(latestVersion);
     const connections = this.clients.size;
+    const outdatedConnections = [...this.clients.values()].filter(
+      (version) =>
+        version !== undefined &&
+        (version === "" || isNewerExtensionVersion(latestVersion, version)),
+    ).length;
     return {
       ...info,
+      latestVersion,
+      outdatedConnections,
       connections,
       phase:
         connections > 0
@@ -97,7 +136,7 @@ export class BrowserBridge {
   }
   close() {
     clearInterval(this.timer);
-    for (const socket of this.clients) socket.destroy();
+    for (const socket of this.clients.keys()) socket.destroy();
     this.clients.clear();
     this.server?.close();
     this.server = undefined;

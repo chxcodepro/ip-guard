@@ -1,7 +1,10 @@
 import { z } from "zod";
-export { formatIPText } from "./ip-display.ts";
 
-export const nativeVersion = "0.9.3";
+import { extensionVersionSchema } from "./extension-version.ts";
+export { formatIPText } from "./ip-display.ts";
+export { extensionVersionSchema, isNewerExtensionVersion } from "./extension-version.ts";
+
+export const nativeVersion = "0.9.4";
 export const nativeProtocol = 6;
 export const browserExtensionId = "blmgamidelconfabgilaacbkokomegep";
 export const browserHostName = "com.ipguard.browser";
@@ -9,6 +12,7 @@ export const browserStateSchema = z
   .object({
     protocol: z.literal(1),
     appVersion: z.string(),
+    latestExtensionVersion: extensionVersionSchema.optional(),
     phase: z.enum(["allowed", "blocked", "offline", "unlocked", "checking"]),
     currentIp: z.union([z.literal(""), z.ipv4()]),
     expectedIp: z.union([z.literal(""), z.ipv4()]),
@@ -24,6 +28,9 @@ export type BrowserState = z.infer<typeof browserStateSchema>;
 export const extensionStatusSchema = z.object({
   phase: z.enum(["running", "installed", "missing", "unknown"]),
   installedBrowsers: z.array(z.enum(["Chrome", "Edge"])),
+  outdatedBrowsers: z.array(z.enum(["Chrome", "Edge"])),
+  outdatedConnections: z.number().int().nonnegative(),
+  latestVersion: extensionVersionSchema,
   connections: z.number().int().nonnegative(),
   error: z.string(),
 });

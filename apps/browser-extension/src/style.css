@@ -78,6 +78,46 @@ header {
   letter-spacing: 1px;
   font-weight: 500;
 }
+.extension-update:not([hidden]) {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  gap: 8px 12px;
+  margin-top: 20px;
+  padding: 12px;
+  border-radius: 10px;
+  background: var(--soft);
+  border-left: 3px solid var(--amber);
+  color: var(--amber);
+  font-size: 13px;
+  animation: reveal 180ms ease-out;
+}
+.extension-update p {
+  grid-column: 1 / -1;
+  margin: 0;
+  line-height: 1.6;
+  color: var(--muted);
+}
+.extension-update a {
+  color: inherit;
+  text-underline-offset: 3px;
+}
+.extension-update p span {
+  white-space: nowrap;
+}
+.extension-update a:focus-visible {
+  outline: 2px solid var(--amber);
+  outline-offset: 3px;
+}
+body[data-view="popup"][data-update="true"] main {
+  padding-bottom: 20px;
+}
+body[data-view="popup"][data-update="true"] .extension-update {
+  margin: 16px 0 12px;
+}
+body[data-view="popup"][data-update="true"] .scene {
+  display: none;
+}
 button {
   font: inherit;
   border: 1px solid var(--line);
@@ -239,6 +279,16 @@ footer {
 @keyframes orbit {
   to {
     transform: rotate(360deg);
+  }
+}
+@keyframes reveal {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
   }
 }
 @keyframes check {

@@ -19,12 +19,21 @@
 - 连接未就绪、地址未锁定、IP 不匹配、检测失败或结果过期时阻断。
 - 阻断时已打开的 Claude 页面切换到本地结果页，中断页面连接，未发送内容可能丢失。
 - 匹配后点击「返回 Claude」恢复原页面；后台持续检测。
+- 匹配且放行规则就绪时，直接输入 `claude.ai` 或点击「打开 Claude」「返回 Claude」直接进入 Claude 网站。
 - 无痕 / InPrivate 窗口需要在扩展详情中单独允许。
 - 扩展需保持启用，IP Guard 需持续运行；退出桌面程序后网页保持阻断。
 
 ## 连接与隐私
 
-使用浏览器 Native Messaging 和当前用户的只读命名管道。扩展接收防护状态、当前 IP、锁定 IP 和检测时间，不读取聊天内容，不接管系统代理。宿主仅接受固定扩展 ID `blmgamidelconfabgilaacbkokomegep`。
+使用浏览器 Native Messaging 和按当前用户隔离的命名管道。扩展接收防护状态、当前 IP、锁定 IP、检测时间及插件最新版本，并上报自身版本。聊天内容和系统代理保持原样。宿主仅接受固定扩展 ID `blmgamidelconfabgilaacbkokomegep`。
+
+## 更新提醒
+
+桌面和扩展 0.9.4 起提供版本提醒，复用桌面启动时的 GitHub Releases 检查。工具栏 `↑` 与插件页面提示新版；阻断时 `!` 优先显示。插件页底部显示实际插件版本，桌面设置会核对正在运行的版本并标记「插件待更新」。
+
+- 桌面自带目录：更新桌面程序后，在扩展管理页点击「重新加载」。
+- 独立 ZIP：点击「下载插件」，解压覆盖原目录，再到扩展管理页点击「重新加载」。
+- Chrome 扩展管理页为 `chrome://extensions`，Edge 为 `edge://extensions`。
 
 官方依据：[Native Messaging](https://developer.chrome.com/docs/extensions/develop/concepts/native-messaging)、[请求规则](https://developer.chrome.com/docs/extensions/reference/api/declarativeNetRequest)、[后台生命周期](https://developer.chrome.com/docs/extensions/develop/concepts/service-workers/lifecycle)。
 
