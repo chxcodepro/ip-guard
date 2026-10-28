@@ -99,7 +99,10 @@ namespace IpGuard {
             int startEpoch; lock(state) startEpoch = epoch;
             lock(state) checking=true; Publish();
             try {
-                ClaudeProbeResult result=probe.Read(progress); string ip=result.ip;
+                ClaudeProbeResult result=probe.Read(item=>{
+                    if(progress!=null) progress(item);
+                    if(item.step=="reconnect") Observe(item.status=="running" ? "代理/网络切换中，正在重新检测" : item.status=="ok" ? "代理/网络连接已恢复" : "代理/网络重检未通过");
+                }); string ip=result.ip;
                 lock(state) { currentIp=ip; checkedAt=result.checkedAt; NetworkProbe.Adapter=result.adapter ?? ""; }
                 if(!config.rulesLocked) { lock(state) { healthy=false; reason="IP 未锁定，请先锁定允许的公网 IPv4"; } return false; }
                 if(progress!=null) {

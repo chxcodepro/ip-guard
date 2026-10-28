@@ -4,7 +4,7 @@ import { extensionVersionSchema } from "./extension-version.ts";
 export { formatIPText } from "./ip-display.ts";
 export { extensionVersionSchema, isNewerExtensionVersion } from "./extension-version.ts";
 
-export const nativeVersion = "0.9.4";
+export const nativeVersion = "0.9.5";
 export const nativeProtocol = 6;
 export const browserExtensionId = "blmgamidelconfabgilaacbkokomegep";
 export const browserHostName = "com.ipguard.browser";

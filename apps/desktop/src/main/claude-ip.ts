@@ -1,4 +1,5 @@
 import { EventEmitter } from "node:events";
+import { setTimeout as delay } from "node:timers/promises";
 
 import { session } from "electron";
 import type { Session } from "electron";
@@ -35,6 +36,11 @@ const publicIPv4 = (value: string) => {
     (a === 203 && b === 0 && c === 113)
   );
 };
+const transientNetworkError = (error: unknown) =>
+  error instanceof Error &&
+  /\bERR_(?:NETWORK_CHANGED|PROXY_CONNECTION_FAILED|CONNECTION_RESET|CONNECTION_CLOSED|CONNECTION_ABORTED|INTERNET_DISCONNECTED|NAME_NOT_RESOLVED|TUNNEL_CONNECTION_FAILED|ADDRESS_UNREACHABLE|CONNECTION_TIMED_OUT|TIMED_OUT)\b/.test(
+    error.message,
+  );
 async function bounded<T>(work: Promise<T>, signal: AbortSignal): Promise<T> {
   if (signal.aborted) void work.catch(() => undefined);
   signal.throwIfAborted();
@@ -85,85 +91,135 @@ export class ClaudeIPv4 extends EventEmitter<{
     const started = performance.now();
     const signal = AbortSignal.any([this.abort.signal, AbortSignal.timeout(4500)]);
     let status = 0,
-      adapter = "";
-    this.progress({ step: "dns", label: "DNS 解析", status: "running", detail: "claude.ai" });
+      adapter = "",
+      retries = 0;
     try {
       const transport = (this.transport ??= session.fromPartition("ip-guard-ipv4", {
         cache: false,
       }));
-      await bounded(transport.closeAllConnections(), signal);
-      const proxy = await bounded(transport.resolveProxy(claudeIpv4Endpoint), signal);
-      adapter = proxy === "DIRECT" ? "系统直连" : "系统代理";
-      if (proxy !== "DIRECT")
-        this.progress({ step: "dns", label: "DNS 解析", status: "info", detail: "由系统代理解析" });
-      else {
+      while (true) {
         try {
-          const host = await bounded(
-            transport.resolveHost("claude.ai", { queryType: "A" }),
+          signal.throwIfAborted();
+          status = 0;
+          await bounded(transport.closeAllConnections(), signal);
+          if (retries) {
+            await bounded(transport.clearHostResolverCache(), signal);
+            await bounded(transport.forceReloadProxyConfig(), signal);
+          }
+          this.progress({ step: "dns", label: "DNS 解析", status: "running", detail: "claude.ai" });
+          const proxy = await bounded(transport.resolveProxy(claudeIpv4Endpoint), signal);
+          adapter = proxy === "DIRECT" ? "系统直连" : "系统代理";
+          if (proxy !== "DIRECT")
+            this.progress({
+              step: "dns",
+              label: "DNS 解析",
+              status: "info",
+              detail: "由系统代理解析",
+            });
+          else {
+            try {
+              const host = await bounded(
+                transport.resolveHost("claude.ai", { queryType: "A" }),
+                signal,
+              );
+              this.progress({
+                step: "dns",
+                label: "DNS 解析",
+                status: "ok",
+                detail: host.endpoints[0]?.address ?? "系统解析",
+              });
+            } catch (error) {
+              signal.throwIfAborted();
+              this.progress({
+                step: "dns",
+                label: "DNS 解析",
+                status: "unknown",
+                detail: error instanceof Error ? error.message : "未取得解析信息",
+              });
+            }
+          }
+          this.progress({
+            step: "ipv4",
+            label: "Claude AI IPv4",
+            status: "running",
+            detail: adapter,
+          });
+          const response = await bounded(
+            transport.fetch(claudeIpv4Endpoint, {
+              signal,
+              cache: "no-store",
+              redirect: "manual",
+              bypassCustomProtocolHandlers: true,
+            }),
             signal,
           );
-          this.progress({
-            step: "dns",
-            label: "DNS 解析",
-            status: "ok",
-            detail: host.endpoints[0]?.address ?? "系统解析",
-          });
+          status = response.status;
+          if (status !== 200) throw new Error(`Claude 出口返回 HTTP ${status}`);
+          const reader = response.body?.getReader();
+          if (!reader) throw new Error("Claude 出口响应为空");
+          const decoder = new TextDecoder();
+          let body = "",
+            bytes = 0;
+          try {
+            while (true) {
+              const chunk = await bounded(reader.read(), signal);
+              if (chunk.done) break;
+              bytes += chunk.value.byteLength;
+              if (bytes > 32768) throw new Error("Claude 出口响应超过 32 KB");
+              body += decoder.decode(chunk.value, { stream: true });
+            }
+            body += decoder.decode();
+          } finally {
+            void reader.cancel().catch(() => undefined);
+          }
+          const ip = /^ip=([^\r\n]+)$/m.exec(body)?.[1]?.trim() ?? "";
+          if (!publicIPv4(ip))
+            throw new Error("Claude 出口未返回公网 IPv4，请确认代理提供 IPv4 出口");
+          if (retries)
+            this.progress({
+              step: "reconnect",
+              label: "代理/网络",
+              status: "ok",
+              detail: "连接已恢复",
+            });
+          this.progress({ step: "ipv4", label: "Claude AI IPv4", status: "ok", detail: ip });
+          return {
+            ip,
+            error: "",
+            checkedAt: new Date().toISOString(),
+            adapter,
+            status,
+            ms: Math.round(performance.now() - started),
+          };
         } catch (error) {
-          signal.throwIfAborted();
+          if (signal.aborted || !transientNetworkError(error)) throw error;
+          retries++;
           this.progress({
-            step: "dns",
-            label: "DNS 解析",
-            status: "unknown",
-            detail: error instanceof Error ? error.message : "未取得解析信息",
+            step: "reconnect",
+            label: "代理/网络",
+            status: "running",
+            detail: `正在重试（${retries}）`,
           });
+          await delay(Math.min(retries * 250, 1000), undefined, { signal });
         }
       }
-      this.progress({ step: "ipv4", label: "Claude AI IPv4", status: "running", detail: adapter });
-      const response = await bounded(
-        transport.fetch(claudeIpv4Endpoint, {
-          signal,
-          cache: "no-store",
-          redirect: "manual",
-          bypassCustomProtocolHandlers: true,
-        }),
-        signal,
-      );
-      status = response.status;
-      if (status !== 200) throw new Error(`Claude 出口返回 HTTP ${status}`);
-      const reader = response.body?.getReader();
-      if (!reader) throw new Error("Claude 出口响应为空");
-      const decoder = new TextDecoder();
-      let body = "",
-        bytes = 0;
-      try {
-        while (true) {
-          const chunk = await bounded(reader.read(), signal);
-          if (chunk.done) break;
-          bytes += chunk.value.byteLength;
-          if (bytes > 32768) throw new Error("Claude 出口响应超过 32 KB");
-          body += decoder.decode(chunk.value, { stream: true });
-        }
-        body += decoder.decode();
-      } finally {
-        void reader.cancel().catch(() => undefined);
-      }
-      const ip = /^ip=([^\r\n]+)$/m.exec(body)?.[1]?.trim() ?? "";
-      if (!publicIPv4(ip)) throw new Error("Claude 出口未返回公网 IPv4，请确认代理提供 IPv4 出口");
-      this.progress({ step: "ipv4", label: "Claude AI IPv4", status: "ok", detail: ip });
-      return {
-        ip,
-        error: "",
-        checkedAt: new Date().toISOString(),
-        adapter,
-        status,
-        ms: Math.round(performance.now() - started),
-      };
     } catch (error) {
-      const detail = signal.aborted
-        ? "Claude 出口检测超时或已取消"
-        : error instanceof Error
-          ? error.message
-          : "Claude 出口检测失败";
+      if (retries && !this.abort.signal.aborted)
+        this.progress({
+          step: "reconnect",
+          label: "代理/网络",
+          status: "error",
+          detail: "检测暂不可用",
+        });
+      const detail = this.abort.signal.aborted
+        ? "Claude 出口检测已取消"
+        : signal.aborted
+          ? retries
+            ? "代理/网络连接恢复超时（4.5 秒），请确认代理已连接后重试"
+            : "Claude 出口检测超时（4.5 秒），请确认代理/网络已连接后重试"
+          : error instanceof Error
+            ? error.message
+            : "Claude 出口检测失败";
       return {
         ip: "",
         error: detail,
