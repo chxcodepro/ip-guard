@@ -7,6 +7,7 @@ import { app } from "electron";
 import { z } from "zod";
 
 import type { AppPreset } from "@ip-guard/electron";
+import { claudeDesktopFamilies } from "@ip-guard/electron";
 
 const run = promisify(execFile);
 const metadataSchema = z.object({
@@ -51,9 +52,9 @@ if($npm) {
   } catch { $npmError='npm 全局目录读取失败' }
 }
 try {
-  Get-AppxPackage -Name Claude -ErrorAction Stop | ForEach-Object {
+  Get-AppxPackage -Name '*Claude*' -ErrorAction Stop | Where-Object { $_.PackageFamilyName -in @(${claudeDesktopFamilies.map((family) => `'${family}'`).join(",")}) } | Sort-Object -Property @{Expression={[version]$_.Version};Descending=$true} | ForEach-Object {
     $p=$_
-    (Get-AppxPackageManifest -Package $p.PackageFullName -ErrorAction Stop).Package.Applications.Application | Where-Object { $_.Id -eq 'Claude' } | ForEach-Object {
+    (Get-AppxPackageManifest -Package $p.PackageFullName -ErrorAction Stop).Package.Applications.Application | Where-Object { [IO.Path]::GetFileName([string]$_.Executable) -ieq 'Claude.exe' } | ForEach-Object {
       $desktop+=@{path=(Join-Path $p.InstallLocation $_.Executable);icon='';version=[string]$p.Version;source='msix'}
     }
   }

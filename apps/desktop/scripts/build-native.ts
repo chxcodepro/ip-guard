@@ -4,6 +4,7 @@ import path from "node:path";
 
 import {
   browserExtensionId,
+  claudeDesktopFamilies,
   claudeIpv4Endpoint,
   nativeProtocol,
   nativeVersion,
@@ -27,6 +28,7 @@ namespace IpGuard { public static class BuildInfo {
  public const string ExtensionId = ${JSON.stringify(browserExtensionId)};
  public const int Protocol = ${nativeProtocol};
  public const string Endpoint = ${JSON.stringify(claudeIpv4Endpoint)};
+ public static readonly string[] ClaudeDesktopFamilies = new[] { ${claudeDesktopFamilies.map((family) => JSON.stringify(family)).join(", ")} };
 } }`,
   "utf8",
 );

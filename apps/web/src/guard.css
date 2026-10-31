@@ -670,6 +670,7 @@ input::placeholder {
   color: var(--g-accent);
 }
 .small-status.warning,
+.app-action-reason.path-warning,
 .extension-update-guide strong {
   color: var(--g-warning);
 }

@@ -46,6 +46,7 @@ import type {
 import {
   claudeIpv4Endpoint,
   formatIPText,
+  isClaudeDesktopPath,
   nativeVersion,
   settingsSchema,
 } from "@ip-guard/electron";
@@ -581,7 +582,7 @@ export function GuardApp() {
   const locked = snapshot.rulesLocked;
   const offline = Boolean(bridge && !loading && (!snapshot.online || failure));
   const available = Boolean(bridge && snapshot.online && snapshot.admin && !failure);
-  const enabledCount = snapshot.apps.filter((a) => a.enabled).length;
+  const enabledCount = snapshot.apps.filter((a) => a.enabled && !a.pathIssue).length;
   const status = loading
     ? "连接守护程序"
     : offline
@@ -658,11 +659,13 @@ export function GuardApp() {
                   ? "请重启守护程序"
                   : !snapshot.admin
                     ? "请以管理员身份重启"
-                    : !running && !locked
-                      ? "先锁定允许的公网 IPv4"
-                      : !running && !target.enabled
-                        ? "先开启右侧防护开关"
-                        : "";
+                    : !running && target.pathIssue
+                      ? target.pathIssue
+                      : !running && !locked
+                        ? "先锁定允许的公网 IPv4"
+                        : !running && !target.enabled
+                          ? "先开启右侧防护开关"
+                          : "";
             return (
               <article className="app-row" key={target.id}>
                 <div className={`app-glyph ${running ? "running" : ""}`}>
@@ -671,30 +674,51 @@ export function GuardApp() {
                 <div className="app-info">
                   <h3>
                     {target.name}
-                    <span className={`small-status ${running ? "good" : ""}`}>
+                    <span
+                      className={`small-status ${target.pathIssue ? "warning" : running ? "good" : ""}`}
+                    >
                       {running
                         ? "运行中"
-                        : target.enabled
-                          ? locked
-                            ? "待启动"
-                            : "待锁定"
-                          : "未启用"}
+                        : target.pathIssue
+                          ? "路径待更新"
+                          : target.enabled
+                            ? locked
+                              ? "待启动"
+                              : "待锁定"
+                            : "未启用"}
                     </span>
                   </h3>
                   <div title={target.path} className="app-path mono">
                     {target.path}
                   </div>
-                  {actionReason && (
-                    <div className="app-action-reason" id={`app-reason-${target.id}`}>
-                      {actionReason}
+                  {(target.pathIssue || actionReason) && (
+                    <div
+                      className={`app-action-reason ${target.pathIssue ? "path-warning" : ""}`}
+                      id={`app-reason-${target.id}`}
+                    >
+                      {target.pathIssue || actionReason}
                     </div>
                   )}
                 </div>
                 <div className="app-actions">
+                  {isClaudeDesktopPath(target.path) && (
+                    <button
+                      className="btn"
+                      disabled={busy || !available}
+                      onClick={() => void invoke({ action: "desktop:relocate", id: target.id })}
+                    >
+                      <RefreshCw size={14} />
+                      更新路径
+                    </button>
+                  )}
                   <Toggle
                     checked={target.enabled}
                     label={`${target.enabled ? "解除" : "启用"} ${target.name} 防护`}
-                    disabled={busy || !available || (!target.enabled && !locked)}
+                    disabled={
+                      busy ||
+                      !available ||
+                      (!target.enabled && (!locked || Boolean(target.pathIssue)))
+                    }
                     onChange={() =>
                       void invoke({ action: "protect", id: target.id, enabled: !target.enabled })
                     }

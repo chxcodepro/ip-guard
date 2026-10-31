@@ -3,7 +3,7 @@ import path from "node:path";
 
 import { app, BrowserWindow, dialog, ipcMain, shell } from "electron";
 
-import { commandSchema, desktopChannels } from "@ip-guard/electron";
+import { commandSchema, desktopChannels, isClaudeDesktopPath } from "@ip-guard/electron";
 import type { Reply } from "@ip-guard/electron";
 
 import type { BrowserBridge } from "#src/main/browser-bridge.ts";
@@ -106,6 +106,30 @@ export const setupIpc = (
       return { ipv4: result.ip };
     }
     if (command.action === "presets") return { presets: await claudePresets() };
+    if (command.action === "desktop:relocate") {
+      const snapshot = await guardian.request("status");
+      const target = snapshot.apps.find((item) => item.id === command.id);
+      if (!snapshot.admin || !target || !isClaudeDesktopPath(target.path))
+        throw new Error("请以管理员身份选择已添加的 Claude Desktop。");
+      const latest = (await claudePresets()).find((item) => item.id === "claude-desktop");
+      if (!latest || latest.status !== "ready" || !isClaudeDesktopPath(latest.path))
+        throw new Error(latest?.message || "未找到已注册的 Claude Desktop，请确认安装已完成。");
+      if (target.path.toLowerCase() !== latest.path.toLowerCase()) {
+        const answer = await dialog.showMessageBox({
+          type: "warning",
+          title: "更新 Claude Desktop 路径",
+          message: `更新 ${target.name} 的安装路径？`,
+          detail: `${target.path}\n→ ${latest.path}\n\n保留名称、启动参数和防护开关。${target.enabled ? "将结束原受控进程，请先关闭新版 Claude。" : "防护继续保持关闭。"}`,
+          buttons: ["取消", "更新路径"],
+          defaultId: 0,
+          cancelId: 0,
+        });
+        if (answer.response !== 1) return { cancelled: true };
+      }
+      return {
+        snapshot: await guardian.request("relocate", { targetId: target.id, path: latest.path }),
+      };
+    }
     if (command.action === "coffee:status") return { diagnostics: coffee.report };
     if (command.action === "coffee:refresh") return { diagnostics: coffee.refresh() };
     if (command.action === "restart") {

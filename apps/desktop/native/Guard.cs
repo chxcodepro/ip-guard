@@ -24,6 +24,7 @@ namespace IpGuard {
     public sealed class Guard {
         readonly object state = new object(), actions = new object(), output = new object();
         readonly List<Session> sessions = new List<Session>();
+        readonly HashSet<string> staleDesktopPaths=new HashSet<string>();
         readonly List<object> logs = new List<object>();
         readonly Config config;
         readonly WifiWatch wifi;
@@ -61,7 +62,8 @@ namespace IpGuard {
                 networkAdapters=adapters, watchedAdapter=watchedAdapter, networkAdapterId=config.networkAdapterId,
                 lastChecked = checkedAt, reason = reason, running = sessions.Where(s => !s.stopped).Select(s => s.appId).Distinct().ToArray(),
                 detection = detection,
-                autostart = config.autostart, rulesLocked = config.rulesLocked, settings = config.settings, apps = config.apps.ToArray(), logs = logs.ToArray()
+                autostart = config.autostart, rulesLocked = config.rulesLocked, settings = config.settings,
+                apps = config.apps.Select(t=>new {id=t.id,name=t.name,path=t.path,arguments=t.arguments,enabled=t.enabled,pathIssue=PathIssue(t)}).ToArray(), logs = logs.ToArray()
             };
         }
         void Publish() { Emit(new { type = "snapshot", data = Snapshot() }); }
@@ -137,6 +139,48 @@ namespace IpGuard {
         void StopTarget(string id) {
             lock(state) foreach(Session s in sessions.Where(s => s.appId == id)) { s.stopped = true; Win32.TerminateJobObject(s.job, 1); }
         }
+        string PathIssue(Target target) {
+            return PackagePolicy.IsClaudeDesktop(target.path) && (staleDesktopPaths.Contains(target.id) || !File.Exists(target.path)) ? "安装目录已更新，请先更新路径" : "";
+        }
+        void Relocate(Target previous,string path) {
+            if(!PackagePolicy.IsClaudeDesktop(previous.path)) throw new Exception("请选择已添加的 Claude Desktop。");
+            Target next=new Target {id=previous.id,name=previous.name,path=path,arguments=previous.arguments,enabled=previous.enabled};
+            Data.Validate(next,true);
+            if(!PackagePolicy.IsClaudeDesktop(next.path) || PackagePolicy.Find(next.path)==null) throw new Exception("请选择已注册的 Claude Desktop 安装入口。");
+            if(String.Equals(previous.path,next.path,StringComparison.OrdinalIgnoreCase)) { Log("info",previous.name+" · 路径已是最新");return; }
+            if(config.apps.Any(t=>t.id!=previous.id && String.Equals(t.path,next.path,StringComparison.OrdinalIgnoreCase))) throw new Exception("新版路径已在程序列表中，请使用已有程序。");
+            if(previous.enabled) { RequireClosed(next);SystemPolicy.FirewallHealthy(); }
+            List<Target> apps=config.apps.Select(t=>t.id==previous.id ? next : t).ToList();
+            bool installing=false;
+            try {
+                if(previous.enabled) {
+                    SystemPolicy.Block(previous,true);StopTarget(previous.id);
+                    SystemPolicy.Unintercept(previous);SystemPolicy.RemoveFirewall(previous);
+                    installing=true;
+                    SystemPolicy.Block(next,true);SystemPolicy.Intercept(next);
+                }
+                Data.Save(new Config {settings=config.settings,apps=apps,autostart=config.autostart,rulesLocked=config.rulesLocked,networkAdapterId=config.networkAdapterId,networkAdapterName=config.networkAdapterName});
+                lock(state) {config.apps=apps;staleDesktopPaths.Remove(previous.id);}
+            } catch(Exception error) {
+                if(previous.enabled) {
+                    List<Action> recovery=new List<Action>();List<string> failures=new List<string>();
+                    if(installing) {recovery.Add(()=>SystemPolicy.Unintercept(next));recovery.Add(()=>SystemPolicy.RemoveFirewall(next));}
+                    recovery.Add(()=>SystemPolicy.Block(previous,true));
+                    if(File.Exists(previous.path)) recovery.Add(()=>{
+                        try {PackagePolicy.Find(previous.path);SystemPolicy.Intercept(previous);}
+                        catch(PackageUnavailableException) { }
+                    });
+                    foreach(Action operation in recovery) {try {operation();}catch(Exception restore) {failures.Add(restore.GetBaseException().Message);}}
+                    if(failures.Count>0) {
+                        lock(state) staleDesktopPaths.Add(previous.id);
+                        Publish();
+                        throw new Exception("路径迁移失败，原防护恢复也遇到错误。请运行恢复工具后重新配置。"+String.Join("；",failures));
+                    }
+                }
+                throw new Exception("路径迁移失败，原配置已保留。"+error.GetBaseException().Message);
+            }
+            Log("info",next.name+" · 已更新安装路径，保留原防护配置");
+        }
         void Protect(Target t, bool enabled) {
             if(enabled && !config.rulesLocked) throw new Exception("请先锁定允许的公网 IPv4，再启用程序防护。");
             SystemPolicy.RequireAdmin(); StopTarget(t.id);
@@ -186,6 +230,7 @@ namespace IpGuard {
                 } else {
                     Target t = Find(input["targetId"] as string);
                     if(action == "protect") Protect(t, (bool)input["enabled"]);
+                    else if(action == "relocate") Relocate(t,input["path"] as string);
                     else if(action == "edit") {
                         Target changed=new Target { id=t.id,path=t.path,enabled=t.enabled,name=input["name"] as string,arguments=input["arguments"] as string };
                         Data.Validate(changed,false);
@@ -194,9 +239,10 @@ namespace IpGuard {
                         lock(state) config.apps=next;
                         Log("info",changed.name+" · 启动配置已更新");
                     }
-                    else if(action == "remove") { if(t.enabled) Protect(t, false); lock(state) config.apps.Remove(t); Data.Save(config); }
+                    else if(action == "remove") { if(t.enabled) Protect(t, false); lock(state) {config.apps.Remove(t);staleDesktopPaths.Remove(t.id);} Data.Save(config); }
                     else if(action == "stop") { StopTarget(t.id); SystemPolicy.Block(t,true); Log("info", t.name + " · 已停止并封锁"); }
                     else if(action == "start") {
+                        if(PathIssue(t)!="") throw new Exception("Claude Desktop 安装目录已更新，请先点击“更新路径”。");
                         if(!config.rulesLocked) throw new Exception("请先锁定允许的公网 IPv4。");
                         if(!t.enabled) throw new Exception("请先启用该程序的防护。");
                         Data.Validate(t, true);
@@ -356,7 +402,15 @@ namespace IpGuard {
             try { BrowserHost.Register(true); } catch(Exception error) { Log("error","浏览器连接注册失败 · "+error.Message); }
             if(config.apps.Any(t => t.enabled) && SystemPolicy.Admin) {
                 Trip("守护程序已启动，等待重新校验"); BlockPending();
-                foreach(Target t in config.apps.Where(t => t.enabled)) { Data.Validate(t,true); SystemPolicy.Intercept(t); }
+                foreach(Target t in config.apps.Where(t => t.enabled)) {
+                    if(PackagePolicy.IsClaudeDesktop(t.path) && !File.Exists(t.path)) { staleDesktopPaths.Add(t.id);Log("warning",t.name+" · 安装目录已更新，请点击“更新路径”重新接管");continue; }
+                    try { Data.Validate(t,true);SystemPolicy.Intercept(t); }
+                    catch(PackageUnavailableException) {
+                        if(!PackagePolicy.IsClaudeDesktop(t.path)) throw;
+                        staleDesktopPaths.Add(t.id);
+                        Log("warning",t.name+" · 安装包已更新，请点击“更新路径”重新接管");
+                    }
+                }
             }
             NetworkChange.NetworkAddressChanged += NetworkChanged;
             NetworkChange.NetworkAvailabilityChanged += AvailabilityChanged;

@@ -10,6 +10,9 @@ using System.Xml;
 using Microsoft.Win32;
 
 namespace IpGuard {
+    public sealed class PackageUnavailableException : Exception {
+        public PackageUnavailableException() : base("此安装包未注册或路径已更新，请更新程序路径。") { }
+    }
     public sealed class PackageIdentity {
         public string fullName, appUserModelId;
     }
@@ -23,11 +26,38 @@ namespace IpGuard {
         [PreserveSig] int ActivateApplication([MarshalAs(UnmanagedType.LPWStr)] string appUserModelId, [MarshalAs(UnmanagedType.LPWStr)] string arguments, uint options, out uint pid);
     }
     public static class PackagePolicy {
+        public static bool IsClaudeDesktop(string exe) {
+            if(!String.Equals(Path.GetFileName(exe),"Claude.exe",StringComparison.OrdinalIgnoreCase)) return false;
+            DirectoryInfo directory=new FileInfo(exe).Directory;
+            while(directory!=null) {
+                string[] parts=directory.Name.Split('_');Version version;
+                if(parts.Length==5 && Version.TryParse(parts[1],out version) && version.Build>=0 && version.Revision>=0 && BuildInfo.ClaudeDesktopFamilies.Any(family=>String.Equals(family,parts[0]+"_"+parts[4],StringComparison.OrdinalIgnoreCase))) return true;
+                directory=directory.Parent;
+            }
+            return false;
+        }
         const string Owned = @"Software\IPGuard\PackageDebugging";
         [DllImport("kernel32.dll", CharSet=CharSet.Unicode)] static extern int GetPackagePathByFullName(string package, ref uint length, StringBuilder path);
+        [DllImport("kernel32.dll", CharSet=CharSet.Unicode)] static extern int GetPackagesByPackageFamily(string family,ref uint count,IntPtr names,ref uint length,IntPtr buffer);
         [DllImport("kernel32.dll", CharSet=CharSet.Unicode)] static extern int GetPackageFullName(IntPtr process, ref uint length, StringBuilder name);
         [DllImport("advapi32.dll", SetLastError=true)] static extern bool OpenProcessToken(IntPtr process, uint access, out IntPtr token);
         static IPackageDebugSettings Debugger() { return (IPackageDebugSettings)Activator.CreateInstance(Type.GetTypeFromCLSID(new Guid("B1AEC16F-2383-4852-B0E9-8F0B1DC66B4D"), true)); }
+        static bool Registered(string fullName) {
+            string[] parts=fullName.Split('_');
+            if(parts.Length!=5) throw new Exception("安装包身份无效。");
+            uint count=0,length=0;
+            int result=GetPackagesByPackageFamily(parts[0]+"_"+parts[4],ref count,IntPtr.Zero,ref length,IntPtr.Zero);
+            if(result!=0 && result!=122) throw new Win32Exception(result);
+            if(count==0) return false;
+            IntPtr names=IntPtr.Zero,buffer=IntPtr.Zero;
+            try {
+                names=Marshal.AllocHGlobal(checked((int)count*IntPtr.Size));buffer=Marshal.AllocHGlobal(checked((int)length*2));
+                result=GetPackagesByPackageFamily(parts[0]+"_"+parts[4],ref count,names,ref length,buffer);
+                if(result!=0) throw new Win32Exception(result);
+                for(int i=0;i<count;i++) if(String.Equals(Marshal.PtrToStringUni(Marshal.ReadIntPtr(names,i*IntPtr.Size)),fullName,StringComparison.OrdinalIgnoreCase)) return true;
+                return false;
+            } finally {if(names!=IntPtr.Zero) Marshal.FreeHGlobal(names);if(buffer!=IntPtr.Zero) Marshal.FreeHGlobal(buffer);}
+        }
         static string PackagePath(string name) {
             uint length=0; int result=GetPackagePathByFullName(name, ref length, null);
             if(result==15700 || result==2 || result==1168) return null;
@@ -43,8 +73,9 @@ namespace IpGuard {
                 if(File.Exists(manifest)) {
                     string[] parts=directory.Name.Split('_'); Version version;
                     if(parts.Length!=5 || !Version.TryParse(parts[1],out version) || version.Build<0 || version.Revision<0) return null;
+                    if(!Registered(directory.Name)) throw new PackageUnavailableException();
                     string registered=PackagePath(directory.Name);
-                    if(registered==null || !String.Equals(Path.GetFullPath(registered),directory.FullName,StringComparison.OrdinalIgnoreCase)) throw new Exception("此安装包未注册或路径已更新，请重新选择已安装的程序入口。");
+                    if(registered==null || !String.Equals(Path.GetFullPath(registered),directory.FullName,StringComparison.OrdinalIgnoreCase)) throw new PackageUnavailableException();
                     XmlDocument xml=new XmlDocument { XmlResolver=null };
                     using(XmlReader reader=XmlReader.Create(manifest,new XmlReaderSettings { DtdProcessing=DtdProcessing.Prohibit, XmlResolver=null })) xml.Load(reader);
                     foreach(XmlNode node in xml.GetElementsByTagName("Application")) {
@@ -95,10 +126,23 @@ namespace IpGuard {
             if(String.IsNullOrEmpty(package) || String.IsNullOrEmpty(command)) throw new Exception("安装包防护记录损坏，请检查恢复日志。");
             string current=DebugPath(package);
             if(!String.IsNullOrEmpty(current) && !String.Equals(current,command,StringComparison.Ordinal)) throw new Exception("安装包调试入口已被其他工具修改，保留现有设置。");
-            if(PackagePath(package)!=null) {
+            if(Registered(package)) {
                 IPackageDebugSettings settings=Debugger();
                 try { Marshal.ThrowExceptionForHR(settings.DisableDebugging(package)); }
                 finally { Marshal.ReleaseComObject(settings); }
+            } else {
+                foreach(var entry in new[] {
+                    new {root=Registry.CurrentUser,path=@"Software\Microsoft\Windows\CurrentVersion\PackagedAppXDebug\"+package,value=""},
+                    new {root=Registry.CurrentUser,path=@"Software\Classes\ActivatableClasses\Package\"+package+@"\DebugInformation",value="DebugPath"},
+                    new {root=Registry.LocalMachine,path=@"Software\Classes\ActivatableClasses\Package\"+package+@"\DebugInformation",value="DebugPath"}
+                }) {
+                    using(RegistryKey prior=entry.root.OpenSubKey(entry.path)) {
+                        if(prior==null || !String.Equals(prior.GetValue(entry.value) as string,command,StringComparison.Ordinal)) continue;
+                    }
+                    using(RegistryKey key=entry.root.OpenSubKey(entry.path,true)) {
+                        if(key!=null && String.Equals(key.GetValue(entry.value) as string,command,StringComparison.Ordinal)) key.DeleteValue(entry.value,false);
+                    }
+                }
             }
             Registry.CurrentUser.DeleteSubKeyTree(Owned+"\\"+id,false);
         }

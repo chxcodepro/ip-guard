@@ -3,9 +3,10 @@ import { z } from "zod";
 import { extensionVersionSchema } from "./extension-version.ts";
 export { formatIPText } from "./ip-display.ts";
 export { extensionVersionSchema, isNewerExtensionVersion } from "./extension-version.ts";
+export { claudeDesktopFamilies, isClaudeDesktopPath } from "./claude-desktop.ts";
 
-export const nativeVersion = "0.9.5";
-export const nativeProtocol = 6;
+export const nativeVersion = "0.9.6";
+export const nativeProtocol = 7;
 export const browserExtensionId = "blmgamidelconfabgilaacbkokomegep";
 export const browserHostName = "com.ipguard.browser";
 export const browserStateSchema = z
@@ -147,7 +148,7 @@ export const snapshotSchema = z.object({
   watchedAdapter: adapterSchema,
   networkAdapterId: z.string(),
   settings: z.object({ expectedIp: z.string(), intervalSeconds: z.number() }),
-  apps: z.array(appSchema),
+  apps: z.array(appSchema.extend({ pathIssue: z.string() })),
   logs: z.array(logSchema),
 });
 export const commandSchema = z.discriminatedUnion("action", [
@@ -169,6 +170,7 @@ export const commandSchema = z.discriminatedUnion("action", [
   z.object({ action: z.literal("autostart"), enabled: z.boolean() }),
   z.object({ action: z.literal("pick") }),
   z.object({ action: z.literal("presets") }),
+  z.object({ action: z.literal("desktop:relocate"), id: z.uuid() }),
   z.object({ action: z.literal("adapter:set"), adapterId: z.string().max(256) }),
   z.object({ action: z.literal("ip:current") }),
   z.object({ action: z.literal("claude:status") }),
