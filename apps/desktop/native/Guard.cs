@@ -39,6 +39,8 @@ namespace IpGuard {
         int checkRequested;
         string detection = "";
         long lastVerified;
+        readonly FailurePolicy failures = new FailurePolicy();
+        bool retrySoon;
         DateTime nextCheck = DateTime.MinValue;
         public Guard() { config = Data.Load(); wifi = new WifiWatch(why => Observe(why, true)); probe=new ClaudeProbe(Emit); RefreshAdapters(); }
         void Emit(object message) { lock(output) { Console.WriteLine(Data.Json().Serialize(message)); Console.Out.Flush(); } }
@@ -115,16 +117,26 @@ namespace IpGuard {
                     } catch(Exception) { progress(new ProbeProgress("timezone","本机时区","unknown","未取得时区信息")); }
                     progress(new ProbeProgress("match","锁定地址",ip==config.settings.expectedIp ? "ok" : "error",ip==config.settings.expectedIp ? "IPv4 完全匹配" : "IPv4 与锁定地址不同"));
                 }
-                if(ip != config.settings.expectedIp) { Trip("公网 IPv4 与允许地址不匹配，已阻断",true); BlockPending(); return false; }
+                if(ip != config.settings.expectedIp) { lock(state) failures.Mismatch(); Trip("公网 IPv4 与允许地址不匹配，已阻断",true); BlockPending(); return false; }
                 lock(state) {
                     if(startEpoch != epoch) return false;
-                    healthy = true; reason = ""; lastVerified = Stopwatch.GetTimestamp();
+                    healthy = true; reason = ""; lastVerified = Stopwatch.GetTimestamp(); failures.Success();
                 }
                 return true;
             } catch(Exception e) {
-                lock(state) { checkedAt = DateTimeOffset.Now.ToString("o"); }
+                bool stop; int attempt;
+                lock(state) { checkedAt = DateTimeOffset.Now.ToString("o"); attempt = failures.Count + 1; stop = !healthy || failures.NetworkFailure(); }
+                if(!stop) {
+                    lock(state) { reason = "公网 IPv4 校验失败 · " + e.GetBaseException().Message; retrySoon = true; }
+                    Log("warning", "公网 IPv4 校验失败（连续第 " + attempt + "/" + FailurePolicy.Limit + " 次，暂不结束）· " + e.GetBaseException().Message);
+                    return false;
+                }
                 Trip("公网 IPv4 校验失败 · " + e.GetBaseException().Message); BlockPending(); return false;
-            } finally { lock(state) checking=false; nextCheck = Interlocked.Exchange(ref checkRequested,0)==1 ? DateTime.MinValue : started.AddSeconds(config.settings.intervalSeconds); Publish(); }
+            } finally {
+                bool retry; lock(state) { checking=false; retry=retrySoon; retrySoon=false; }
+                nextCheck = Interlocked.Exchange(ref checkRequested,0)==1 ? DateTime.MinValue : retry ? DateTime.UtcNow.AddSeconds(FailurePolicy.RetrySeconds) : started.AddSeconds(config.settings.intervalSeconds);
+                Publish();
+            }
         }
         Target Find(string id) {
             Target t = config.apps.SingleOrDefault(a => a.id == id);
@@ -316,7 +328,7 @@ namespace IpGuard {
             if(process==IntPtr.Zero) return false;
             try {
                 lock(state) {
-                    if(!healthy || !config.rulesLocked || lastVerified==0 || Stopwatch.GetTimestamp()-lastVerified>Stopwatch.Frequency*(config.settings.intervalSeconds+8)) return false;
+                    if(!healthy || failures.Count>0 || !config.rulesLocked || lastVerified==0 || Stopwatch.GetTimestamp()-lastVerified>Stopwatch.Frequency*(config.settings.intervalSeconds+8)) return false;
                     foreach(Session session in sessions.Where(s=>s.appId==appId && !s.stopped && s.epoch==epoch)) {
                         bool inside;
                         Win32.Check(Win32.IsProcessInJob(process,session.job,out inside),"无法核对受保护进程树");
@@ -366,7 +378,7 @@ namespace IpGuard {
                         if(disconnected) throw new IOException("启动校验窗口已关闭。");
                         string name = "Local\\IPGuard-" + Guid.NewGuid().ToString("D");
                         lock(state) {
-                            if(!healthy) throw new Exception(reason);
+                            if(!healthy || failures.Count>0) throw new Exception(reason);
                             session = new Session { appId=target.id, name=name, job=Win32.NewJob(name), epoch=epoch };
                             sessions.Add(session);
                         }
@@ -382,7 +394,7 @@ namespace IpGuard {
                         bool stale;
                         lock(state) {
                             if(session.epoch != epoch || !healthy) break;
-                            stale = Stopwatch.GetTimestamp()-lastVerified > Stopwatch.Frequency*(config.settings.intervalSeconds+8);
+                            stale = Stopwatch.GetTimestamp()-lastVerified > Stopwatch.Frequency*(config.settings.intervalSeconds+8+(failures.Count>0 || checking ? FailurePolicy.GraceSeconds : 0));
                             if(!stale) writer.WriteLine("lease");
                         }
                         if(stale) { Trip("公网检测结果已过期，已结束受保护程序"); break; }
