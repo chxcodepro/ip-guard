@@ -22,7 +22,7 @@ namespace IpGuard {
             lock(sync) { if(stopped) throw new Exception("Claude 出口检测服务正在退出。"); pending.Add(id,request); }
             try {
                 emit(new { type="probe",id=id });
-                if(!request.signal.Wait(8000)) throw new Exception("Claude AI 出口 IPv4 检测服务未响应。");
+                if(!request.signal.Wait(BuildInfo.ProbeTimeoutMs)) throw new Exception("Claude AI 出口 IPv4 检测服务未响应。");
                 ClaudeProbeResult result=request.result;
                 if(result==null) throw new Exception("Claude AI 出口 IPv4 检测已取消。");
                 if(!String.IsNullOrEmpty(result.error)) throw new Exception(result.error);

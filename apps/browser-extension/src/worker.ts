@@ -6,7 +6,7 @@ let state: BrowserState = {
   appVersion: "",
   phase: "offline",
   currentIp: "",
-  expectedIp: "",
+  expectedIps: [],
   checkedAt: "",
   reason: "正在连接 IP Guard",
 };

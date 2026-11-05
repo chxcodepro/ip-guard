@@ -4,7 +4,13 @@ import { setTimeout as delay } from "node:timers/promises";
 import { session } from "electron";
 import type { Session } from "electron";
 
-import { claudeIpv4Endpoint, ipv4Schema } from "@ip-guard/electron";
+import {
+  claudeIpv4Endpoint,
+  ipv4Attempts,
+  ipv4AttemptTimeoutMs,
+  ipv4ProbeTimeoutMs,
+  publicIPv4Schema,
+} from "@ip-guard/electron";
 
 export interface ProbeProgress {
   step: string;
@@ -20,27 +26,6 @@ export interface ClaudeIPv4Result {
   status: number;
   ms: number;
 }
-const publicIPv4 = (value: string) => {
-  if (!ipv4Schema.safeParse(value).success) return false;
-  const [a, b, c] = value.split(".").map(Number);
-  return !(
-    a === 0 ||
-    a === 10 ||
-    a === 127 ||
-    (a !== undefined && a >= 224) ||
-    (a === 100 && b !== undefined && b >= 64 && b <= 127) ||
-    (a === 169 && b === 254) ||
-    (a === 172 && b !== undefined && b >= 16 && b <= 31) ||
-    (a === 192 && (b === 168 || (b === 0 && (c === 0 || c === 2)))) ||
-    (a === 198 && (b === 18 || b === 19 || (b === 51 && c === 100))) ||
-    (a === 203 && b === 0 && c === 113)
-  );
-};
-const transientNetworkError = (error: unknown) =>
-  error instanceof Error &&
-  /\bERR_(?:NETWORK_CHANGED|PROXY_CONNECTION_FAILED|CONNECTION_RESET|CONNECTION_CLOSED|CONNECTION_ABORTED|INTERNET_DISCONNECTED|NAME_NOT_RESOLVED|TUNNEL_CONNECTION_FAILED|ADDRESS_UNREACHABLE|CONNECTION_TIMED_OUT|TIMED_OUT)\b/.test(
-    error.message,
-  );
 async function bounded<T>(work: Promise<T>, signal: AbortSignal): Promise<T> {
   if (signal.aborted) void work.catch(() => undefined);
   signal.throwIfAborted();
@@ -89,7 +74,10 @@ export class ClaudeIPv4 extends EventEmitter<{
   }
   private async read(): Promise<ClaudeIPv4Result> {
     const started = performance.now();
-    const signal = AbortSignal.any([this.abort.signal, AbortSignal.timeout(4500)]);
+    const lifetime = AbortSignal.any([
+      this.abort.signal,
+      AbortSignal.timeout(ipv4ProbeTimeoutMs - 1000),
+    ]);
     let status = 0,
       adapter = "",
       retries = 0;
@@ -98,6 +86,9 @@ export class ClaudeIPv4 extends EventEmitter<{
         cache: false,
       }));
       while (true) {
+        const attempt = new AbortController();
+        const signal = AbortSignal.any([lifetime, attempt.signal]);
+        const timer = setTimeout(() => attempt.abort(), ipv4AttemptTimeoutMs);
         try {
           signal.throwIfAborted();
           status = 0;
@@ -173,7 +164,7 @@ export class ClaudeIPv4 extends EventEmitter<{
             void reader.cancel().catch(() => undefined);
           }
           const ip = /^ip=([^\r\n]+)$/m.exec(body)?.[1]?.trim() ?? "";
-          if (!publicIPv4(ip))
+          if (!publicIPv4Schema.safeParse(ip).success)
             throw new Error("Claude 出口未返回公网 IPv4，请确认代理提供 IPv4 出口");
           if (retries)
             this.progress({
@@ -192,15 +183,27 @@ export class ClaudeIPv4 extends EventEmitter<{
             ms: Math.round(performance.now() - started),
           };
         } catch (error) {
-          if (signal.aborted || !transientNetworkError(error)) throw error;
+          if (lifetime.aborted) throw error;
+          const detail = attempt.signal.aborted
+            ? "单次检测超时（4.5 秒）"
+            : error instanceof Error
+              ? error.message
+              : "未取得公网 IPv4";
+          if (retries === ipv4Attempts - 1)
+            throw new Error(`${ipv4Attempts} 次检测均未取得公网 IPv4 · ${detail}`);
           retries++;
           this.progress({
             step: "reconnect",
-            label: "代理/网络",
+            label: "IPv4 重试",
             status: "running",
-            detail: `正在重试（${retries}）`,
+            detail: `第 ${retries + 1}/${ipv4Attempts} 次 · 上次未取得公网 IPv4`,
           });
-          await delay(Math.min(retries * 250, 1000), undefined, { signal });
+          clearTimeout(timer);
+          attempt.abort();
+          await delay(retries * 250, undefined, { signal: lifetime });
+        } finally {
+          clearTimeout(timer);
+          attempt.abort();
         }
       }
     } catch (error) {
@@ -213,10 +216,8 @@ export class ClaudeIPv4 extends EventEmitter<{
         });
       const detail = this.abort.signal.aborted
         ? "Claude 出口检测已取消"
-        : signal.aborted
-          ? retries
-            ? "代理/网络连接恢复超时（4.5 秒），请确认代理已连接后重试"
-            : "Claude 出口检测超时（4.5 秒），请确认代理/网络已连接后重试"
+        : lifetime.aborted
+          ? "三次 IPv4 检测等待超时，请确认代理/网络已连接后重试"
           : error instanceof Error
             ? error.message
             : "Claude 出口检测失败";

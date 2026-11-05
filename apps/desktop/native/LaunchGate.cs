@@ -11,7 +11,8 @@ using System.Windows.Forms;
 
 namespace IpGuard {
     public sealed class GateMessage {
-        public string type,name,expectedIp,currentIp,job,error,code;
+        public string type,name,currentIp,job,error,code;
+        public string[] expectedIps;
         public ProbeProgress data;
         public bool? allow;
         public bool inherit;
@@ -77,14 +78,14 @@ namespace IpGuard {
             catch(ArgumentException) { return false; }
         }
         static int Execute(string[] args,bool packaged,LaunchWindow window,bool inherited) {
-            Win32.ProcessInfo info=new Win32.ProcessInfo(); string ip="",expected=""; bool processOwned=false;
+            Win32.ProcessInfo info=new Win32.ProcessInfo(); string ip=""; string[] expected=new string[0]; bool processOwned=false;
             try {
                 if(args.Length<(packaged ? 6 : 4)) throw new Exception("启动参数无效。");
                 string sid=packaged ? SystemPolicy.Sid : args[1], id=packaged ? args[1] : args[2]; Guid parsed;
                 if(sid!=SystemPolicy.Sid || !Guid.TryParseExact(id,"D",out parsed)) throw new Exception("启动标识无效。");
                 Config config=Data.Load(); Target target=config.apps.SingleOrDefault(t=>t.id==id);
                 if(target==null || !target.enabled) throw new Exception("该程序尚未启用防护。");
-                expected=config.settings.expectedIp; if(window!=null) window.Context(target.name,expected);
+                expected=config.settings.expectedIps.ToArray(); if(window!=null) window.Context(target.name,expected);
                 string exe=target.path;
                 if(packaged) { info=PackagePolicy.OpenTarget(target,Argument(args,"-p"),Argument(args,"-tid")); processOwned=true; }
                 using(NamedPipeClientStream pipe=new NamedPipeClientStream(".","IPGuard-"+sid,PipeDirection.InOut,PipeOptions.Asynchronous)) {
@@ -97,14 +98,14 @@ namespace IpGuard {
                             writer.WriteLine(Data.Json().Serialize(new { id=id,path=exe,package=packaged,pid=info.pid,tid=info.tid,inherit=inherited }));
                             GateMessage result=null;
                             for(int n=0;n<64;n++) {
-                                GateMessage message=Data.Json().Deserialize<GateMessage>(ReadTimed(reader,15000));
+                                GateMessage message=Data.Json().Deserialize<GateMessage>(ReadTimed(reader,BuildInfo.ProbeTimeoutMs+5000));
                                 if(message==null) throw new Exception("启动校验响应无效。");
-                                if(message.type=="context") { expected=message.expectedIp ?? expected; if(window!=null) window.Context(message.name ?? target.name,expected); }
+                                if(message.type=="context") { expected=message.expectedIps ?? expected; if(window!=null) window.Context(message.name ?? target.name,expected); }
                                 else if(message.type=="progress" && message.data!=null) { if(window!=null) window.Progress(message.data); }
                                 else { result=message; break; }
                             }
                             if(result==null || result.allow==null) throw new Exception("启动校验未完成。");
-                            ip=result.currentIp ?? ""; expected=result.expectedIp ?? expected;
+                            ip=result.currentIp ?? ""; expected=result.expectedIps ?? expected;
                             if(result.allow!=true) {
                                 if(result.code==FirewallDisabledException.Code) throw new FirewallDisabledException(result.error);
                                 throw new Exception(result.error ?? "启动已阻断。");

@@ -33,6 +33,7 @@ namespace IpGuard {
         bool ipsVisible;
         string description="";
         string name, currentIp="", expectedIp="", reason="", phase="running";
+        int expectedCount;
         double completed=-1;
         bool finishing;
         volatile bool cancelled;
@@ -97,7 +98,7 @@ namespace IpGuard {
         }
         static string MaskV6(string value) {string[] parts=value.Split(':');return parts[0]+":"+parts[1]+":••••:••••";}
         void Describe(string value) { description=value; AccessibleDescription=Display(value); }
-        public void Context(string appName,string expected) { Post(()=>{name=appName; expectedIp=expected ?? ""; Describe(name+"，锁定 IP："+expectedIp); Invalidate();}); }
+        public void Context(string appName,string[] expected) { Post(()=>{name=appName; expectedCount=expected.Length; expectedIp=String.Join("、",expected); Describe(name+"，锁定 IP："+expectedIp); Invalidate();}); }
         public void Progress(ProbeProgress item) {
             Post(()=>{
                 if(phase!="running") return;
@@ -109,11 +110,11 @@ namespace IpGuard {
                 Invalidate();
             });
         }
-        public void Success(string ip,string expected) { Post(()=>{currentIp=ip; expectedIp=expected; phase="complete"; Describe("校验通过，公网 IP："+ip); completed=clock.Elapsed.TotalMilliseconds; Invalidate();}); }
-        public void Block(string message,string ip,string expected,bool firewall) {
+        public void Success(string ip,string[] expected) { Post(()=>{currentIp=ip; expectedCount=expected.Length; expectedIp=String.Join("、",expected); phase="complete"; Describe("校验通过，公网 IP："+ip); completed=clock.Elapsed.TotalMilliseconds; Invalidate();}); }
+        public void Block(string message,string ip,string[] expected,bool firewall) {
             Post(()=>{
                 if(cancelled) return;
-                currentIp=ip ?? currentIp; expectedIp=expected ?? expectedIp; reason=message; phase="blocked"; completed=clock.Elapsed.TotalMilliseconds;
+                currentIp=ip ?? currentIp; if(expected!=null) {expectedCount=expected.Length;expectedIp=String.Join("、",expected);} reason=message; phase="blocked"; completed=clock.Elapsed.TotalMilliseconds;
                 Describe("启动已阻断，"+reason+"，当前 IP："+currentIp+"，锁定 IP："+expectedIp);
                 foreach(Step step in steps) if(step.status=="running") step.status="error";
                 timer.Start(); Opacity=1; ackButton.Visible=true; firewallButton.Visible=firewall;
@@ -137,8 +138,8 @@ namespace IpGuard {
         void ApplyProtectionNotice(ProtectionNotice data) {
                 ipsVisible=false;ipButton.Text="显示 IP";ipButton.AccessibleName="显示 IP 地址";
                 name=data.kind=="ip_changed" ? "检测到出口地址变化" : data.kind=="guard_offline" ? "守护连接已中断" : "公网 IPv4 检测暂不可用";
-                currentIp=data.currentIp;expectedIp=data.expectedIp;phase="blocked";
-                reason=data.kind=="ip_changed" ? "当前出口与锁定地址不同。恢复允许的网络后，请手动重新启动。" : data.kind=="guard_offline" ? "为保护连接，已停止受控程序。请先重启 IP Guard，再启动程序。" : "暂时无法确认公网 IPv4。网络恢复并通过校验后，请手动重新启动。";
+                currentIp=data.currentIp;expectedCount=data.expectedIps.Length;expectedIp=String.Join("、",data.expectedIps);phase="blocked";
+                reason=data.kind=="ip_changed" ? "当前出口未在允许列表中。恢复允许的网络后，请手动重新启动。" : data.kind=="guard_offline" ? "为保护连接，已停止受控程序。请先重启 IP Guard，再启动程序。" : "暂时无法确认公网 IPv4。网络恢复并通过校验后，请手动重新启动。";
                 steps.Clear();int count=Math.Min(data.apps.Length,6);
                 for(int i=0;i<count;i++) steps.Add(new Step {id="app-"+i,label=i==5 && data.apps.Length>6 ? "另有 "+(data.apps.Length-5)+" 个程序" : data.apps[i],status="ok",detail="进程树已结束",appeared=clock.Elapsed.TotalMilliseconds-200});
                 completed=clock.Elapsed.TotalMilliseconds;Describe(name+"。已停止："+String.Join("、",data.apps)+"。"+reason+"。当前 IP："+currentIp+"，锁定 IP："+expectedIp);
@@ -186,11 +187,11 @@ namespace IpGuard {
             Label(g,name,textFont,muted,new RectangleF(180,22,340,27));
             using(Pen separator=new Pen(line,1)) { g.DrawLine(separator,24,68,656,68); g.DrawLine(separator,224,92,224,340); }
             Label(g,notification ? "已停止的程序" : "启动校验",textFont,muted,new RectangleF(27,86,170,24));
-            for(int i=0;i<steps.Count && i<6;i++) {
+            for(int i=0;i<steps.Count && i<7;i++) {
                 Step s=steps[i]; double elapsed=clock.Elapsed.TotalMilliseconds-s.appeared; if(elapsed<0) continue;
                 float reveal=motion ? (float)Math.Min(1,elapsed/150) : 1;
                 GraphicsState state=g.Save(); g.TranslateTransform(0,(1-reveal)*5);
-                float y=123+i*38; Color color=s.status=="error" ? red : s.status=="warning" ? amber : s.status=="info"||s.status=="unknown" ? muted : green;
+                float y=steps.Count>6 ? 117+i*32 : 123+i*38; Color color=s.status=="error" ? red : s.status=="warning" ? amber : s.status=="info"||s.status=="unknown" ? muted : green;
                 Color toned=Color.FromArgb((int)(255*reveal),color);
                 if(s.status=="ok") { using(Brush b=new SolidBrush(Color.FromArgb((int)(35*reveal),green))) g.FillEllipse(b,28,y+2,18,18); Checkmark(g,new PointF(37,y+11),1,toned,0.37f); }
                 else if(s.status=="running") { using(Pen pen=new Pen(toned,1.8f)) g.DrawArc(pen,30,y+4,14,14,motion ? (float)(clock.Elapsed.TotalSeconds*240)%360 : -90,260); }
@@ -216,7 +217,7 @@ namespace IpGuard {
             }
             Label(g,notification ? "受保护程序已停止" : phase=="running" ? "正在核验网络" : phase=="complete" ? "允许启动" : "启动已阻断",headingFont,ink,new RectangleF(250,233,385,34),StringAlignment.Center);
             Label(g,currentIp=="" ? (phase=="blocked" ? "未取得公网 IPv4" : "正在获取公网 IPv4") : currentIp,currentIp=="" ? textFont : ipFont,currentIp=="" ? muted : ink,new RectangleF(250,276,385,34),StringAlignment.Center);
-            Label(g,"锁定 IP  ·  "+(expectedIp=="" ? "未取得" : expectedIp),textFont,muted,new RectangleF(250,314,385,24),StringAlignment.Center);
+            Label(g,expectedCount>2 ? "允许列表  ·  "+expectedCount+" 个 IPv4" : "锁定 IP  ·  "+(expectedIp=="" ? "未取得" : expectedIp),smallFont,muted,new RectangleF(250,310,385,30),StringAlignment.Center);
             if(phase=="blocked") {
                 Label(g,reason,smallFont,red,new RectangleF(250,340,398,36));
             } else Label(g,phase=="complete" ? "校验完成，正在启动" : "正在校验锁定的公网 IPv4",smallFont,muted,new RectangleF(250,378,385,26),StringAlignment.Center);

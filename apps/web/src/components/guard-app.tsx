@@ -47,6 +47,7 @@ import {
   claudeIpv4Endpoint,
   formatIPText,
   isClaudeDesktopPath,
+  maxAllowedIps,
   nativeVersion,
   settingsSchema,
 } from "@ip-guard/electron";
@@ -84,7 +85,7 @@ const initial: Snapshot = {
   },
   networkAdapterId: "",
   rulesLocked: false,
-  settings: { expectedIp: "", intervalSeconds: 2 },
+  settings: { expectedIps: [], intervalSeconds: 2 },
   apps: [],
   logs: [],
 };
@@ -180,16 +181,26 @@ function RuleForm({
   onUnlock: () => Promise<void>;
   onFetch?: () => Promise<string>;
 }) {
-  const [draft, setDraft] = useState(settings);
+  const savedIps = settings.expectedIps.join("\n");
+  const [draft, setDraft] = useState({
+    expectedIps: savedIps,
+    intervalSeconds: settings.intervalSeconds,
+  });
   const [error, setError] = useState("");
   const [fetching, setFetching] = useState(false);
-  useEffect(() => setDraft(settings), [locked, settings.expectedIp, settings.intervalSeconds]);
+  useEffect(
+    () => setDraft({ expectedIps: savedIps, intervalSeconds: settings.intervalSeconds }),
+    [locked, savedIps, settings.intervalSeconds],
+  );
   const submit = async (event: FormEvent) => {
     event.preventDefault();
     if (locked || fetching || busy || !available) return;
-    const parsed = settingsSchema.safeParse(draft);
+    const parsed = settingsSchema.safeParse({
+      ...draft,
+      expectedIps: [...new Set(draft.expectedIps.split(/[\s,，;；]+/u).filter(Boolean))],
+    });
     if (!parsed.success) {
-      setError("请填写有效的公网 IPv4 和 1–60 秒检测间隔。");
+      setError(`请填写 1–${maxAllowedIps} 个有效公网 IPv4 和 1–60 秒检测间隔。`);
       return;
     }
     setError("");
@@ -201,7 +212,12 @@ function RuleForm({
     setFetching(true);
     try {
       const ip = await onFetch();
-      setDraft((current) => ({ ...current, expectedIp: ip }));
+      setDraft((current) => ({
+        ...current,
+        expectedIps: [
+          ...new Set([...current.expectedIps.split(/[\s,，;；]+/u).filter(Boolean), ip]),
+        ].join("\n"),
+      }));
     } catch (error) {
       setError(errorText(error, "获取失败"));
     } finally {
@@ -213,18 +229,18 @@ function RuleForm({
       <div className="form-row">
         <label htmlFor="expected-ip">允许的公网 IPv4</label>
         <div className="ipv4-fill-row">
-          <input
+          <textarea
             id="expected-ip"
-            type="text"
             autoComplete="off"
             spellCheck={false}
-            inputMode="decimal"
+            rows={3}
+            maxLength={1024}
             className="mono"
             readOnly={locked || busy || fetching || !ipsVisible}
-            placeholder={ipsVisible ? "填写你的固定公网 IPv4" : "显示 IP 后可手动填写"}
-            value={formatIPText(draft.expectedIp, ipsVisible)}
+            placeholder={ipsVisible ? "每行一个 IPv4，也可用逗号分隔" : "显示 IP 后可填写多个地址"}
+            value={formatIPText(draft.expectedIps, ipsVisible)}
             onChange={(e) => {
-              if (ipsVisible) setDraft({ ...draft, expectedIp: e.target.value.trim() });
+              if (ipsVisible) setDraft({ ...draft, expectedIps: e.target.value });
             }}
             required
           />
@@ -274,7 +290,10 @@ function RuleForm({
             className="btn"
             type="button"
             disabled={busy || !available}
-            onClick={() => void onUnlock()}
+            onClick={(event) => {
+              event.preventDefault();
+              void onUnlock();
+            }}
           >
             {busy ? <LoaderCircle className="spin" size={15} /> : <Unlock size={15} />}取消锁定
           </button>
@@ -930,7 +949,10 @@ export function GuardApp() {
                     <div className="allowed-ip">
                       <span>允许地址</span>
                       <span className="mono">
-                        {formatIPText(snapshot.settings.expectedIp || "尚未设置", ipsVisible)}
+                        {formatIPText(
+                          snapshot.settings.expectedIps.join("、") || "尚未设置",
+                          ipsVisible,
+                        )}
                       </span>
                       {snapshot.ready && <Check size={14} />}
                     </div>

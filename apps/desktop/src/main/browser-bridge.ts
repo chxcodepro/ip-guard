@@ -3,7 +3,12 @@ import type { Server, Socket } from "node:net";
 
 import { z } from "zod";
 
-import { extensionVersionSchema, isNewerExtensionVersion, nativeVersion } from "@ip-guard/electron";
+import {
+  extensionVersionSchema,
+  ipv4ProbeTimeoutMs,
+  isNewerExtensionVersion,
+  nativeVersion,
+} from "@ip-guard/electron";
 import type { BrowserState, ExtensionStatus } from "@ip-guard/electron";
 
 import { browserInstallations } from "#src/main/browser-installation.ts";
@@ -38,7 +43,7 @@ export class BrowserBridge {
       latestExtensionVersion: this.latestVersion(),
       phase: "offline",
       currentIp: value?.currentIp ?? "",
-      expectedIp: value?.settings.expectedIp ?? "",
+      expectedIps: value?.settings.expectedIps ?? [],
       checkedAt: value?.lastChecked ?? "",
       reason: "请启动 IP Guard",
     };
@@ -48,13 +53,19 @@ export class BrowserBridge {
     const age = Date.now() - Date.parse(value.lastChecked);
     if (
       value.ready &&
-      value.currentIp === value.settings.expectedIp &&
+      value.settings.expectedIps.includes(value.currentIp) &&
       value.currentIp &&
       Number.isFinite(age) &&
       age >= -5000 &&
-      age <= (value.settings.intervalSeconds + 8) * 1000
+      age <=
+        (value.settings.intervalSeconds + (value.checking ? ipv4ProbeTimeoutMs / 1000 + 2 : 8)) *
+          1000
     )
-      return { ...base, phase: "allowed", reason: "IPv4 与锁定地址匹配" };
+      return {
+        ...base,
+        phase: "allowed",
+        reason: value.checking ? "正在复核 IPv4，保留本次连接" : "IPv4 命中允许列表",
+      };
     return {
       ...base,
       phase: value.checking && !value.currentIp ? "checking" : "blocked",
@@ -105,7 +116,12 @@ export class BrowserBridge {
       socket.destroy();
       return;
     }
-    socket.write(`${JSON.stringify(this.state())}\n`);
+    const state = this.state();
+    // Protocol-1 extensions require the matching address to retain their equality check.
+    const expectedIp = state.expectedIps.includes(state.currentIp)
+      ? state.currentIp
+      : (state.expectedIps[0] ?? "");
+    socket.write(`${JSON.stringify({ ...state, expectedIp })}\n`);
   }
   private publish() {
     for (const socket of this.clients.keys()) this.send(socket);

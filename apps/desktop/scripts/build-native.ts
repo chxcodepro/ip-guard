@@ -6,6 +6,8 @@ import {
   browserExtensionId,
   claudeDesktopFamilies,
   claudeIpv4Endpoint,
+  ipv4ProbeTimeoutMs,
+  maxAllowedIps,
   nativeProtocol,
   nativeVersion,
 } from "@ip-guard/electron";
@@ -28,6 +30,8 @@ namespace IpGuard { public static class BuildInfo {
  public const string ExtensionId = ${JSON.stringify(browserExtensionId)};
  public const int Protocol = ${nativeProtocol};
  public const string Endpoint = ${JSON.stringify(claudeIpv4Endpoint)};
+ public const int ProbeTimeoutMs = ${ipv4ProbeTimeoutMs};
+ public const int MaxAllowedIps = ${maxAllowedIps};
  public static readonly string[] ClaudeDesktopFamilies = new[] { ${claudeDesktopFamilies.map((family) => JSON.stringify(family)).join(", ")} };
 } }`,
   "utf8",

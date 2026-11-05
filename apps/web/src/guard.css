@@ -437,6 +437,14 @@ button:active:not(:disabled) {
 }
 .allowed-ip svg {
   color: var(--g-accent);
+  flex-shrink: 0;
+}
+.allowed-ip > span:first-child {
+  flex-shrink: 0;
+}
+.allowed-ip .mono {
+  overflow-wrap: anywhere;
+  min-width: 0;
 }
 .network-aside {
   padding: 32px 28px 25px;
@@ -528,12 +536,13 @@ button:active:not(:disabled) {
   align-items: stretch;
   gap: 10px;
 }
-.ipv4-fill-row input {
+.ipv4-fill-row textarea {
   flex: 1;
   min-width: 0;
 }
 .ipv4-fill-row .btn {
   flex-shrink: 0;
+  align-self: flex-start;
 }
 .network-ipv6 {
   grid-column: 1 / -1;
@@ -568,6 +577,7 @@ button:active:not(:disabled) {
   color: #e6bc76;
 }
 input,
+textarea,
 select {
   border: 1px solid var(--g-line);
   background: var(--g-bg);
@@ -577,7 +587,13 @@ select {
   min-width: 0;
   font-size: 12px;
 }
-input::placeholder {
+textarea {
+  resize: vertical;
+  line-height: 1.7;
+  max-height: 240px;
+}
+input::placeholder,
+textarea::placeholder {
   color: var(--g-muted);
   opacity: 0.8;
 }
@@ -613,7 +629,8 @@ input::placeholder {
 .rule-lock-state.locked {
   color: var(--g-accent);
 }
-.rule-form input[readonly] {
+.rule-form input[readonly],
+.rule-form textarea[readonly] {
   background: var(--g-soft);
   cursor: default;
 }

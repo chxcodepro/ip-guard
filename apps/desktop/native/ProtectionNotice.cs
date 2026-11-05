@@ -6,13 +6,13 @@ using System.Windows.Forms;
 
 namespace IpGuard {
     public sealed class ProtectionNotice {
-        public string kind,currentIp,expectedIp;
-        public string[] apps;
+        public string kind,currentIp;
+        public string[] apps,expectedIps;
         static ProtectionNotice Parse(string line) {
             if(line.Length>16384) throw new InvalidDataException("防护提醒数据过长");
             ProtectionNotice data=Data.Json().Deserialize<ProtectionNotice>(line);
             if(data==null || !new[]{"ip_changed","ip_unavailable","guard_offline"}.Contains(data.kind) || data.apps==null || data.apps.Length==0 || data.apps.Length>30 || data.apps.Any(name=>String.IsNullOrWhiteSpace(name) || name.Length>100)) throw new InvalidDataException("防护提醒格式无效");
-            if(data.currentIp==null || data.expectedIp==null || (data.currentIp!="" && !Data.PublicV4(data.currentIp)) || (data.expectedIp!="" && !Data.PublicV4(data.expectedIp))) throw new InvalidDataException("防护提醒地址无效");
+            if(data.currentIp==null || data.expectedIps==null || data.expectedIps.Length>BuildInfo.MaxAllowedIps || (data.currentIp!="" && !Data.PublicV4(data.currentIp)) || data.expectedIps.Any(ip=>!Data.PublicV4(ip))) throw new InvalidDataException("防护提醒地址无效");
             return data;
         }
         public static int Run() {

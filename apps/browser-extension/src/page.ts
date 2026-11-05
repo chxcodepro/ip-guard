@@ -86,7 +86,7 @@ async function render() {
     ipsVisible,
   );
   element("current").textContent = formatIPText(state?.currentIp || "—", ipsVisible);
-  element("expected").textContent = formatIPText(state?.expectedIp || "—", ipsVisible);
+  element("expected").textContent = formatIPText(state?.expectedIps.join("、") || "—", ipsVisible);
   element("version").textContent = `插件 v${installedVersion}`;
   const date = state?.checkedAt ? new Date(state.checkedAt) : undefined;
   element("time").textContent =

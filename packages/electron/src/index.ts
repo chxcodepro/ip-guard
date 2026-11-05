@@ -1,12 +1,20 @@
 import { z } from "zod";
 
 import { extensionVersionSchema } from "./extension-version.ts";
+import { allowedIpsSchema } from "./ipv4-policy.ts";
+export {
+  ipv4Attempts,
+  ipv4AttemptTimeoutMs,
+  ipv4ProbeTimeoutMs,
+  maxAllowedIps,
+  publicIPv4Schema,
+} from "./ipv4-policy.ts";
 export { formatIPText } from "./ip-display.ts";
 export { extensionVersionSchema, isNewerExtensionVersion } from "./extension-version.ts";
 export { claudeDesktopFamilies, isClaudeDesktopPath } from "./claude-desktop.ts";
 
-export const nativeVersion = "0.9.6";
-export const nativeProtocol = 7;
+export const nativeVersion = "0.9.7";
+export const nativeProtocol = 8;
 export const browserExtensionId = "blmgamidelconfabgilaacbkokomegep";
 export const browserHostName = "com.ipguard.browser";
 export const browserStateSchema = z
@@ -16,13 +24,21 @@ export const browserStateSchema = z
     latestExtensionVersion: extensionVersionSchema.optional(),
     phase: z.enum(["allowed", "blocked", "offline", "unlocked", "checking"]),
     currentIp: z.union([z.literal(""), z.ipv4()]),
-    expectedIp: z.union([z.literal(""), z.ipv4()]),
+    expectedIps: allowedIpsSchema.optional(),
+    // Released protocol-1 extensions and hosts still exchange a single address.
+    expectedIp: z.union([z.literal(""), z.ipv4()]).optional(),
     checkedAt: z.string(),
     reason: z.string(),
   })
+  .refine((value) => value.expectedIps !== undefined || value.expectedIp !== undefined)
+  .transform(({ expectedIp, expectedIps, ...value }) => ({
+    ...value,
+    expectedIps: expectedIps ?? (expectedIp ? [expectedIp] : []),
+  }))
   .refine(
     (value) =>
-      value.phase !== "allowed" || (value.currentIp !== "" && value.currentIp === value.expectedIp),
+      value.phase !== "allowed" ||
+      (value.currentIp !== "" && value.expectedIps.includes(value.currentIp)),
     { message: "Invalid IPv4 permission" },
   );
 export type BrowserState = z.infer<typeof browserStateSchema>;
@@ -106,7 +122,7 @@ export type UpdateState = z.infer<typeof updateStateSchema>;
 export const ipv4Schema = z.ipv4();
 export const ipv6Schema = z.ipv6();
 export const settingsSchema = z.object({
-  expectedIp: ipv4Schema,
+  expectedIps: allowedIpsSchema.refine((ips) => ips.length > 0, "请至少填写一个公网 IPv4"),
   intervalSeconds: z.number().int().min(1).max(60),
 });
 export const appSchema = z.object({
@@ -147,7 +163,10 @@ export const snapshotSchema = z.object({
   networkAdapters: z.array(adapterSchema),
   watchedAdapter: adapterSchema,
   networkAdapterId: z.string(),
-  settings: z.object({ expectedIp: z.string(), intervalSeconds: z.number() }),
+  settings: z.object({
+    expectedIps: allowedIpsSchema,
+    intervalSeconds: z.number().int().min(1).max(60),
+  }),
   apps: z.array(appSchema.extend({ pathIssue: z.string() })),
   logs: z.array(logSchema),
 });

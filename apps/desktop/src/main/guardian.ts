@@ -230,7 +230,7 @@ export class Guardian extends EventEmitter {
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
         this.fail("守护操作超时，请重启 IP Guard 后检查日志。");
-      }, 25000);
+      }, 40000);
       this.pending.set(id, { resolve, reject, timer });
       input.write(`${JSON.stringify({ ...payload, action, id })}\n`, (error) => {
         if (error) {

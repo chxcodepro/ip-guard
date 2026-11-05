@@ -9,7 +9,7 @@ using System.Web.Script.Serialization;
 
 namespace IpGuard {
     public sealed class Settings {
-        public string expectedIp = "";
+        public List<string> expectedIps = new List<string>();
         public int intervalSeconds = 2;
     }
     public sealed class Target {
@@ -37,11 +37,20 @@ namespace IpGuard {
             Config c = Json().Deserialize<Config>(source);
             if (c == null || c.settings == null || c.apps == null) throw new Exception("配置文件损坏，请恢复 settings.json.bak 或执行恢复工具。");
             var fields=Json().Deserialize<Dictionary<string,object>>(source);
+            var settings=fields["settings"] as Dictionary<string,object>;
+            if(settings==null) throw new Exception("防护规则格式无效，请恢复配置备份。");
+            bool legacyIp=!settings.ContainsKey("expectedIps");
+            if(legacyIp) {
+                object value;
+                if(!settings.TryGetValue("expectedIp",out value) || !(value is string)) throw new Exception("允许地址配置无效，请恢复配置备份。");
+                string ip=(string)value;
+                c.settings.expectedIps=ip=="" ? new List<string>() : new List<string> {ip};
+            }
             bool legacyLock=!fields.ContainsKey("rulesLocked");
-            bool migrate=legacyLock || !fields.ContainsKey("ipSource");
-            if (legacyLock) c.rulesLocked = c.settings.expectedIp != "";
+            bool migrate=legacyIp || legacyLock || !fields.ContainsKey("ipSource");
+            if (legacyLock) c.rulesLocked = c.settings.expectedIps!=null && c.settings.expectedIps.Count>0;
             if(c.ipSource!="claude-ai") throw new Exception("IP 来源配置无效，请恢复配置备份。");
-            if (c.rulesLocked || c.settings.expectedIp != "") Validate(c.settings);
+            Validate(c.settings,!c.rulesLocked);
             foreach (Target t in c.apps) Validate(t, false);
             if (c.apps.Select(t => t.id).Distinct().Count() != c.apps.Count) throw new Exception("配置中有重复程序。");
             if (migrate) Save(c);
@@ -64,9 +73,10 @@ namespace IpGuard {
                 (b[0] == 198 && (b[1] == 18 || b[1] == 19 || (b[1] == 51 && b[2] == 100))) ||
                 (b[0] == 203 && b[1] == 0 && b[2] == 113));
         }
-        public static void Validate(Settings s) {
+        public static void Validate(Settings s,bool allowEmpty=false) {
             if (s == null) throw new Exception("请输入有效的防护规则。");
-            if (!PublicV4(s.expectedIp)) throw new Exception("请输入有效的公网 IPv4 地址。");
+            if(s.expectedIps==null || (!allowEmpty && s.expectedIps.Count==0) || s.expectedIps.Count>BuildInfo.MaxAllowedIps || s.expectedIps.Any(ip=>!PublicV4(ip))) throw new Exception("请填写 1–"+BuildInfo.MaxAllowedIps+" 个有效的公网 IPv4 地址。");
+            if(s.expectedIps.Distinct().Count()!=s.expectedIps.Count) throw new Exception("允许的公网 IPv4 地址有重复项。");
             if (s.intervalSeconds < 1 || s.intervalSeconds > 60) throw new Exception("检测间隔应为 1–60 秒。");
         }
         public static void Validate(Target t, bool exists) {

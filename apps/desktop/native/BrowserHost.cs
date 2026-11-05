@@ -61,7 +61,7 @@ namespace IpGuard {
                         }
                     }
                 } catch(Exception) {
-                    try { Send(output,Data.Json().Serialize(new { protocol=1,appVersion=BuildInfo.Version,phase="offline",currentIp="",expectedIp="",checkedAt="",reason="请运行新版 IP Guard，并在设置中准备浏览器扩展" })); } catch(IOException) { }
+                    try { Send(output,Data.Json().Serialize(new { protocol=1,appVersion=BuildInfo.Version,phase="offline",currentIp="",expectedIps=new string[0],expectedIp="",checkedAt="",reason="请运行新版 IP Guard，并在设置中准备浏览器扩展" })); } catch(IOException) { }
                     return 1;
                 }
             }

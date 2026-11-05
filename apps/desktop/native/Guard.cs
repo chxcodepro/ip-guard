@@ -103,7 +103,7 @@ namespace IpGuard {
             try {
                 ClaudeProbeResult result=probe.Read(item=>{
                     if(progress!=null) progress(item);
-                    if(item.step=="reconnect") Observe(item.status=="running" ? "代理/网络切换中，正在重新检测" : item.status=="ok" ? "代理/网络连接已恢复" : "代理/网络重检未通过");
+                    if(item.step=="reconnect") Observe(item.status=="running" ? "IPv4 获取暂未成功，"+item.detail : item.status=="ok" ? "IPv4 检测已恢复" : "IPv4 三次检测未通过");
                 }); string ip=result.ip;
                 lock(state) { currentIp=ip; checkedAt=result.checkedAt; NetworkProbe.Adapter=result.adapter ?? ""; }
                 if(!config.rulesLocked) { lock(state) { healthy=false; reason="IP 未锁定，请先锁定允许的公网 IPv4"; } return false; }
@@ -113,9 +113,10 @@ namespace IpGuard {
                         TimeSpan offset=zone.GetUtcOffset(DateTime.Now);
                         progress(new ProbeProgress("timezone","本机时区",zone.Id=="China Standard Time" ? "warning" : "info","UTC"+(offset<TimeSpan.Zero ? "-" : "+")+offset.Duration().ToString(@"hh\:mm")+" · "+(zone.IsDaylightSavingTime(DateTime.Now) ? zone.DaylightName : zone.StandardName)));
                     } catch(Exception) { progress(new ProbeProgress("timezone","本机时区","unknown","未取得时区信息")); }
-                    progress(new ProbeProgress("match","锁定地址",ip==config.settings.expectedIp ? "ok" : "error",ip==config.settings.expectedIp ? "IPv4 完全匹配" : "IPv4 与锁定地址不同"));
+                    bool matches=config.settings.expectedIps.Contains(ip);
+                    progress(new ProbeProgress("match","锁定地址",matches ? "ok" : "error",matches ? "IPv4 命中允许列表" : "IPv4 未在允许列表中"));
                 }
-                if(ip != config.settings.expectedIp) { Trip("公网 IPv4 与允许地址不匹配，已阻断",true); BlockPending(); return false; }
+                if(!config.settings.expectedIps.Contains(ip)) { Trip("公网 IPv4 未在允许列表中，已阻断",true); BlockPending(); return false; }
                 lock(state) {
                     if(startEpoch != epoch) return false;
                     healthy = true; reason = ""; lastVerified = Stopwatch.GetTimestamp();
@@ -316,7 +317,7 @@ namespace IpGuard {
             if(process==IntPtr.Zero) return false;
             try {
                 lock(state) {
-                    if(!healthy || !config.rulesLocked || lastVerified==0 || Stopwatch.GetTimestamp()-lastVerified>Stopwatch.Frequency*(config.settings.intervalSeconds+8)) return false;
+                    if(!healthy || !config.rulesLocked || !VerificationFresh()) return false;
                     foreach(Session session in sessions.Where(s=>s.appId==appId && !s.stopped && s.epoch==epoch)) {
                         bool inside;
                         Win32.Check(Win32.IsProcessInJob(process,session.job,out inside),"无法核对受保护进程树");
@@ -325,6 +326,9 @@ namespace IpGuard {
                     return false;
                 }
             } finally { Win32.CloseHandle(process); }
+        }
+        bool VerificationFresh() {
+            return lastVerified!=0 && Stopwatch.GetTimestamp()-lastVerified<=Stopwatch.Frequency*(config.settings.intervalSeconds+(checking ? BuildInfo.ProbeTimeoutMs/1000+2 : 8));
         }
         void GateSession(NamedPipeServerStream pipe) {
             Session session = null; Target target = null;
@@ -344,7 +348,7 @@ namespace IpGuard {
                     lock(actions) {
                         target = Find(request["id"] as string);
                         if(!target.enabled || !String.Equals(target.path,request["path"] as string,StringComparison.OrdinalIgnoreCase)) throw new Exception("该程序未启用启动防护。");
-                        writer.WriteLine(Data.Json().Serialize(new { type="context", name=target.name, expectedIp=config.settings.expectedIp }));
+                        writer.WriteLine(Data.Json().Serialize(new { type="context", name=target.name, expectedIps=config.settings.expectedIps }));
                         if(!config.rulesLocked) throw new Exception("请先锁定允许的公网 IPv4。");
                         if(PackagePolicy.Find(target.path)!=null) {
                             if(!request.ContainsKey("package") || !(bool)request["package"]) throw new Exception("请通过 Desktop 原快捷方式或 IP Guard 的启动按钮打开安装包。");
@@ -370,7 +374,7 @@ namespace IpGuard {
                             session = new Session { appId=target.id, name=name, job=Win32.NewJob(name), epoch=epoch };
                             sessions.Add(session);
                         }
-                        writer.WriteLine(Data.Json().Serialize(new { allow=true, job=name, currentIp=currentIp, expectedIp=config.settings.expectedIp }));
+                        writer.WriteLine(Data.Json().Serialize(new { allow=true, job=name, currentIp=currentIp, expectedIps=config.settings.expectedIps }));
                         Task<string> started = Task.Run(() => reader.ReadLine());
                         if(!started.Wait(8000) || started.Result != "started") throw new Exception("目标进程未完成启动准备。");
                         SystemPolicy.Block(target,false);
@@ -382,7 +386,7 @@ namespace IpGuard {
                         bool stale;
                         lock(state) {
                             if(session.epoch != epoch || !healthy) break;
-                            stale = Stopwatch.GetTimestamp()-lastVerified > Stopwatch.Frequency*(config.settings.intervalSeconds+8);
+                            stale = !VerificationFresh();
                             if(!stale) writer.WriteLine("lease");
                         }
                         if(stale) { Trip("公网检测结果已过期，已结束受保护程序"); break; }
@@ -390,7 +394,7 @@ namespace IpGuard {
                     }
                 } catch(Exception e) {
                     Log("warning", (target == null ? "启动拦截" : target.name) + " · " + e.GetBaseException().Message);
-                    try { writer.WriteLine(Data.Json().Serialize(new { allow=false, currentIp=currentIp, expectedIp=config.settings.expectedIp, error=e.GetBaseException().Message, code=e.GetBaseException() is FirewallDisabledException ? FirewallDisabledException.Code : "" })); } catch(IOException) { }
+                    try { writer.WriteLine(Data.Json().Serialize(new { allow=false, currentIp=currentIp, expectedIps=config.settings.expectedIps, error=e.GetBaseException().Message, code=e.GetBaseException() is FirewallDisabledException ? FirewallDisabledException.Code : "" })); } catch(IOException) { }
                 } finally {
                     if(session != null) lock(state) { session.stopped=true; Win32.TerminateJobObject(session.job,1); Win32.CloseHandle(session.job); sessions.Remove(session); pendingBlock=true; }
                     Publish();
