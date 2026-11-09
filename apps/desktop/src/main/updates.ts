@@ -1,12 +1,15 @@
 import { EventEmitter } from "node:events";
-import { existsSync, readFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync, statSync } from "node:fs";
 import path from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
 
 import { app, dialog, shell } from "electron";
 import updater from "electron-updater";
 import { z } from "zod";
 
 import type { UpdateState } from "@ip-guard/electron";
+
+import { updateFailure } from "#src/main/update-error.ts";
 
 const repositorySchema = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9-]{0,38}\/[A-Za-z0-9_.-]{1,100}$/);
 const { autoUpdater } = updater;
@@ -22,6 +25,7 @@ export class ApplicationUpdates extends EventEmitter<{ update: [UpdateState] }> 
   };
   private started = false;
   private downloadedVersion = "";
+  private pendingCheck: Promise<UpdateState> | undefined;
   private onInstalling: () => void;
   private onInstallError: () => void;
   constructor(onInstalling: () => void, onInstallError: () => void) {
@@ -51,9 +55,6 @@ export class ApplicationUpdates extends EventEmitter<{ update: [UpdateState] }> 
     autoUpdater.autoDownload = false;
     autoUpdater.autoInstallOnAppQuit = false;
     autoUpdater.allowDowngrade = false;
-    autoUpdater.on("checking-for-update", () =>
-      this.set({ phase: "checking", message: "正在检查 GitHub Releases" }),
-    );
     autoUpdater.on("update-available", (info) =>
       this.set({
         phase: this.downloadedVersion === info.version ? "downloaded" : "available",
@@ -62,8 +63,13 @@ export class ApplicationUpdates extends EventEmitter<{ update: [UpdateState] }> 
         message: this.downloadedVersion === info.version ? "更新已下载" : "发现新版本",
       }),
     );
-    autoUpdater.on("update-not-available", () =>
-      this.set({ phase: "current", checkedAt: new Date().toISOString(), message: "已是最新版本" }),
+    autoUpdater.on("update-not-available", (info) =>
+      this.set({
+        phase: "current",
+        latestVersion: info.version,
+        checkedAt: new Date().toISOString(),
+        message: "已是最新版本",
+      }),
     );
     autoUpdater.on("download-progress", (progress) =>
       this.set({
@@ -82,8 +88,14 @@ export class ApplicationUpdates extends EventEmitter<{ update: [UpdateState] }> 
       });
     });
     autoUpdater.on("error", (error) => {
+      if (this.pendingCheck && this.state.phase === "checking") return;
       if (this.state.phase === "installing") this.onInstallError();
-      this.set({ phase: "error", message: error.message.slice(0, 220) });
+      this.logError(error);
+      this.set({
+        phase: "error",
+        checkedAt: new Date().toISOString(),
+        message: updateFailure(error).message,
+      });
     });
     void this.check();
   }
@@ -91,20 +103,59 @@ export class ApplicationUpdates extends EventEmitter<{ update: [UpdateState] }> 
     this.state = { ...this.state, ...value };
     this.emit("update", this.state);
   }
-  async check() {
+  private logError(error: unknown) {
+    try {
+      const folder = app.getPath("logs");
+      mkdirSync(folder, { recursive: true });
+      const file = path.join(folder, "updates.log");
+      if (existsSync(file) && statSync(file).size > 1048576) renameSync(file, `${file}.1`);
+      const detail = error instanceof Error ? error.stack || error.message : String(error);
+      appendFileSync(file, `${new Date().toISOString()} ${detail.slice(0, 8192)}\n`, "utf8");
+    } catch (logError) {
+      console.error("更新日志写入失败", logError);
+    }
+  }
+  check(): Promise<UpdateState> {
+    if (this.pendingCheck) return this.pendingCheck;
     if (
       this.state.phase === "unconfigured" ||
-      ["checking", "downloading", "installing"].includes(this.state.phase)
+      ["downloading", "installing"].includes(this.state.phase)
     )
-      return this.state;
-    try {
-      await autoUpdater.checkForUpdates();
-    } catch (error) {
-      this.set({
-        phase: "error",
-        checkedAt: new Date().toISOString(),
-        message: error instanceof Error ? error.message.slice(0, 220) : "更新检查失败",
-      });
+      return Promise.resolve(this.state);
+    this.pendingCheck = this.checkWithRetry().finally(() => {
+      this.pendingCheck = undefined;
+    });
+    return this.pendingCheck;
+  }
+  private async checkWithRetry(): Promise<UpdateState> {
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      this.set({ phase: "checking", message: `正在检查 GitHub Releases · 第 ${attempt}/3 次` });
+      try {
+        if (attempt > 1) {
+          await autoUpdater.netSession.closeAllConnections();
+          await autoUpdater.netSession.clearHostResolverCache();
+          await autoUpdater.netSession.forceReloadProxyConfig();
+        }
+        await autoUpdater.checkForUpdates();
+        return this.state;
+      } catch (error) {
+        this.logError(error);
+        const failure = updateFailure(error);
+        if (!failure.retryable || attempt === 3) {
+          const downloaded =
+            this.downloadedVersion === this.state.latestVersion ? this.downloadedVersion : "";
+          this.set({
+            phase: downloaded ? "downloaded" : "error",
+            checkedAt: new Date().toISOString(),
+            message: downloaded
+              ? `${failure.message}已下载 ${downloaded}，可继续安装。`
+              : failure.message,
+          });
+          return this.state;
+        }
+        this.set({ phase: "checking", message: `GitHub 连接暂时失败，正在重试 ${attempt + 1}/3` });
+      }
+      await delay(attempt * 1000);
     }
     return this.state;
   }
@@ -116,7 +167,7 @@ export class ApplicationUpdates extends EventEmitter<{ update: [UpdateState] }> 
     } catch (error) {
       this.set({
         phase: "error",
-        message: error instanceof Error ? error.message.slice(0, 220) : "更新下载失败",
+        message: updateFailure(error).message,
       });
     }
     return this.state;
@@ -141,7 +192,7 @@ export class ApplicationUpdates extends EventEmitter<{ update: [UpdateState] }> 
       this.onInstallError();
       this.set({
         phase: "error",
-        message: error instanceof Error ? error.message : "更新安装失败",
+        message: updateFailure(error).message,
       });
     }
     return this.state;

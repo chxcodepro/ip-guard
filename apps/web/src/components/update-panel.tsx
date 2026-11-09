@@ -69,7 +69,16 @@ export function UpdatePanel() {
         </span>
         <div>
           <strong>当前版本 {state.currentVersion}</strong>
-          {state.latestVersion && <span>最新版本 {state.latestVersion}</span>}
+          {state.latestVersion && (
+            <span>
+              {["checking", "error"].includes(state.phase)
+                ? "上次检测版本"
+                : state.phase === "downloaded"
+                  ? "已下载版本"
+                  : "最新版本"}{" "}
+              {state.latestVersion}
+            </span>
+          )}
         </div>
         <div className="update-actions">
           {state.repository && (
