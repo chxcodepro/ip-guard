@@ -13,8 +13,8 @@ export { formatIPText } from "./ip-display.ts";
 export { extensionVersionSchema, isNewerExtensionVersion } from "./extension-version.ts";
 export { claudeDesktopFamilies, isClaudeDesktopPath } from "./claude-desktop.ts";
 
-export const nativeVersion = "0.9.7";
-export const nativeProtocol = 8;
+export const nativeVersion = "0.9.8";
+export const nativeProtocol = 9;
 export const browserExtensionId = "blmgamidelconfabgilaacbkokomegep";
 export const browserHostName = "com.ipguard.browser";
 export const browserStateSchema = z
@@ -150,6 +150,7 @@ export const snapshotSchema = z.object({
   admin: z.boolean(),
   ready: z.boolean(),
   checking: z.boolean(),
+  networkIssue: z.enum(["idle", "checking", "ip_changed", "ip_unavailable", "enforcement_failed"]),
   nativeVersion: z.literal(nativeVersion),
   ipSource: z.literal(claudeIpv4Endpoint),
   currentIp: z.string(),

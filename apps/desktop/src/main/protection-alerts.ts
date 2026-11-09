@@ -8,7 +8,7 @@ import type { Snapshot } from "@ip-guard/electron";
 
 import { nativePath } from "#src/main/guardian.ts";
 import type { Guardian } from "#src/main/guardian.ts";
-import { detectProtectionStop } from "#src/main/protection-event.ts";
+import { detectProtectionEvent } from "#src/main/protection-event.ts";
 import type { ProtectionNotice } from "#src/main/protection-event.ts";
 
 export class ProtectionAlerts {
@@ -24,7 +24,7 @@ export class ProtectionAlerts {
       const previous = this.previous;
       this.previous = current;
       if (this.stopped) return;
-      const notice = detectProtectionStop(previous, current, guardian.isStopping);
+      const notice = detectProtectionEvent(previous, current, guardian.isStopping);
       if (notice) this.show(notice);
     });
   }
@@ -73,10 +73,15 @@ export class ProtectionAlerts {
     this.fallbackOpen = true;
     try {
       const result = await dialog.showMessageBox({
-        type: "warning",
+        type: notice.kind === "network_restored" ? "info" : "warning",
         title: "IP Guard · 防护提醒",
-        message: "受保护程序已停止",
-        detail: `${notice.apps.join("、")}\n检测到网络出口异常或守护连接中断。恢复允许的网络后，请手动重新启动程序。`,
+        message:
+          notice.kind === "network_restored"
+            ? "受保护程序已恢复联网"
+            : ["guard_offline", "enforcement_failed"].includes(notice.kind)
+              ? "受保护程序已停止"
+              : "已暂停联网，程序保持运行",
+        detail: `${notice.apps.join("、")}\n${notice.kind === "network_restored" ? "IPv4 已命中允许列表。未完成的请求请重新发送。" : ["guard_offline", "enforcement_failed"].includes(notice.kind) ? "请先恢复 IP Guard 防护，再手动重新启动程序。" : "恢复允许的网络后自动恢复联网。"}`,
         buttons: ["知道了", "打开 IP Guard"],
         defaultId: 0,
         cancelId: 0,

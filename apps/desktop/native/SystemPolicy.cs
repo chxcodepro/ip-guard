@@ -98,23 +98,12 @@ namespace IpGuard {
         }
         public static void Block(Target app, bool blocked) {
             RequireAdmin();
-            dynamic policy = Firewall();
-            RemoveRules(policy,app,"v6out","v6in");
-            foreach (string kind in new[] { "out", "in" }) {
-                string name = RuleName(app, kind); dynamic rule;
-                try { rule = policy.Rules.Item(name); }
-                catch (FileNotFoundException) {
-                    rule = Activator.CreateInstance(Type.GetTypeFromProgID("HNetCfg.FWRule", true));
-                    rule.Name = name; rule.Grouping = Owner; rule.ApplicationName = app.path;
-                    rule.Direction = kind.EndsWith("out") ? 2 : 1; rule.Action = 0;
-                    rule.Protocol = 256; rule.Profiles = 7; rule.InterfaceTypes = "All";
-                    rule.Enabled = true; policy.Rules.Add(rule);
-                }
-                if ((string)rule.Grouping != Owner || !String.Equals((string)rule.ApplicationName, app.path, StringComparison.OrdinalIgnoreCase)) throw new Exception("防火墙规则发生冲突。");
-                if((bool)rule.Enabled!=blocked) rule.Enabled = blocked;
-            }
+            ConnectionPolicy.Block(app,blocked);
+            // Deployed WFAS rules are retired only after the replacement policy succeeds.
+            RemoveRules(Firewall(),app,"out","in","v6out","v6in");
         }
         public static void RemoveFirewall(Target app) {
+            ConnectionPolicy.Block(app,false);
             RemoveRules(Firewall(),app,"out","in","v6out","v6in");
         }
         public static void Autostart(bool enable, string appExe) {
@@ -138,6 +127,7 @@ namespace IpGuard {
         }
         public static void Recover() {
             RequireAdmin();
+            ConnectionPolicy.Recover();
             BrowserHost.Unregister();
             PackagePolicy.Recover();
             foreach (RegistryView view in Views) {

@@ -65,6 +65,7 @@ const initial: Snapshot = {
   admin: false,
   ready: false,
   checking: false,
+  networkIssue: "idle",
   nativeVersion,
   ipSource: claudeIpv4Endpoint,
   currentIp: "",
@@ -612,7 +613,9 @@ export function GuardApp() {
           ? "待锁定"
           : snapshot.ready
             ? "IPv4 匹配"
-            : "已阻断";
+            : snapshot.running.length
+              ? "网络已暂停"
+              : "已阻断";
   const lock = async (settings: Settings) => {
     const result = await invoke({ action: "lock", settings });
     if (result?.snapshot) {
@@ -670,6 +673,7 @@ export function GuardApp() {
         <div className="app-list">
           {snapshot.apps.map((target) => {
             const running = snapshot.running.includes(target.id);
+            const networkPaused = running && !snapshot.ready;
             const actionReason = !bridge
               ? "请在 Windows 桌面版操作"
               : loading
@@ -694,10 +698,12 @@ export function GuardApp() {
                   <h3>
                     {target.name}
                     <span
-                      className={`small-status ${target.pathIssue ? "warning" : running ? "good" : ""}`}
+                      className={`small-status ${target.pathIssue || networkPaused ? "warning" : running ? "good" : ""}`}
                     >
                       {running
-                        ? "运行中"
+                        ? networkPaused
+                          ? "运行中 · 网络已暂停"
+                          : "运行中"
                         : target.pathIssue
                           ? "路径待更新"
                           : target.enabled
@@ -1181,7 +1187,7 @@ export function GuardApp() {
                       <ShieldOff size={19} />
                     </span>
                     <div>
-                      <strong>IP 不匹配或校验失败时阻断</strong>
+                      <strong>IP 异常时暂停联网，保留程序</strong>
                     </div>
                     <span className="fixed-value">
                       <Check size={14} />
