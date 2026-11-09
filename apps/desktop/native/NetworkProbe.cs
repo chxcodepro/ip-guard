@@ -12,8 +12,13 @@ namespace IpGuard {
     }
     public sealed class ProbeProgress {
         public string step,label,status,detail;
+        public int attempt;
         public ProbeProgress() { }
         public ProbeProgress(string step,string label,string status,string detail) { this.step=step; this.label=label; this.status=status; this.detail=detail; }
+    }
+    public sealed class ProbeState {
+        public int round,attempt;
+        public string phase="idle";
     }
     public static class NetworkProbe {
         public static string Adapter="";

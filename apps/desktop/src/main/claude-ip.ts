@@ -12,12 +12,11 @@ import {
   publicIPv4Schema,
 } from "@ip-guard/electron";
 
-export interface ProbeProgress {
-  step: string;
+export type ProbeProgress = {
   label: string;
   status: string;
   detail: string;
-}
+} & ({ step: "attempt"; attempt: number } | { step: "dns" | "ipv4" | "reconnect" });
 export interface ClaudeIPv4Result {
   ip: string;
   error: string;
@@ -91,6 +90,13 @@ export class ClaudeIPv4 extends EventEmitter<{
         const timer = setTimeout(() => attempt.abort(), ipv4AttemptTimeoutMs);
         try {
           signal.throwIfAborted();
+          this.progress({
+            step: "attempt",
+            label: "IPv4 检测",
+            status: "running",
+            detail: `第 ${retries + 1}/${ipv4Attempts} 次`,
+            attempt: retries + 1,
+          });
           status = 0;
           await bounded(transport.closeAllConnections(), signal);
           if (retries) {

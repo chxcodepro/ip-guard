@@ -10,6 +10,7 @@ export type ProtectionNotice = {
   apps: string[];
   currentIp: string;
   expectedIps: string[];
+  probe: Snapshot["probe"];
 };
 export function detectProtectionEvent(
   previous: Snapshot | undefined,
@@ -45,5 +46,6 @@ export function detectProtectionEvent(
     apps: [...new Set(apps)],
     currentIp: current.online ? current.currentIp : "",
     expectedIps: current.settings.expectedIps,
+    probe: current.probe,
   };
 }

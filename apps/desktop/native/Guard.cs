@@ -37,6 +37,8 @@ namespace IpGuard {
         string currentIp = "", reason = "请先锁定允许的公网 IPv4", checkedAt = "", topology = "";
         int epoch,networkRevision;
         string networkIssue="idle";
+        int probeRound,probeAttempt;
+        string probePhase="idle";
         int checkRequested;
         string detection = "";
         long lastVerified;
@@ -60,6 +62,7 @@ namespace IpGuard {
                 online = true,
                 admin = SystemPolicy.Admin, ready = healthy, currentIp = currentIp, adapter = NetworkProbe.Adapter,
                 checking=checking, networkIssue=networkIssue, nativeVersion=BuildInfo.Version, ipSource=BuildInfo.Endpoint,
+                probe=new {round=probeRound,attempt=probeAttempt,phase=probePhase},
                 networkAdapters=adapters, watchedAdapter=watchedAdapter, networkAdapterId=config.networkAdapterId,
                 lastChecked = checkedAt, reason = reason, running = sessions.Where(s => !s.stopped).Select(s => s.appId).Distinct().ToArray(),
                 detection = detection,
@@ -116,9 +119,18 @@ namespace IpGuard {
             DateTime started=DateTime.UtcNow;
             Interlocked.Exchange(ref checkRequested,0);
             int startEpoch,startNetwork; lock(state) {startEpoch=epoch;startNetwork=networkRevision;}
-            lock(state) checking=true; Publish();
+            lock(state) {
+                probeRound=probePhase=="failed" && networkIssue!="idle" ? probeRound+1 : 1;
+                probeAttempt=0;probePhase="checking";checking=true;
+            }
+            Publish();
             try {
                 ClaudeProbeResult result=probe.Read(item=>{
+                    if(item.step=="attempt") {
+                        if(item.attempt<1 || item.attempt>BuildInfo.ProbeAttempts) throw new Exception("IPv4 检测次数无效。");
+                        lock(state) probeAttempt=item.attempt;
+                        Publish();return;
+                    }
                     if(progress!=null) progress(item);
                     if(item.step=="reconnect") {
                         if(item.status=="running") lock(state) {
@@ -141,19 +153,19 @@ namespace IpGuard {
                     bool matches=config.settings.expectedIps.Contains(ip);
                     progress(new ProbeProgress("match","锁定地址",matches ? "ok" : "error",matches ? "IPv4 命中允许列表" : "IPv4 未在允许列表中"));
                 }
-                if(!config.settings.expectedIps.Contains(ip)) { PauseNetwork("公网 IPv4 未在允许列表中，已暂停联网，程序保持运行","ip_changed",true);return false; }
+                if(!config.settings.expectedIps.Contains(ip)) { lock(state) probePhase="failed";PauseNetwork("公网 IPv4 未在允许列表中，已暂停联网，程序保持运行","ip_changed",true);return false; }
                 lock(state) {
                     if(startEpoch!=epoch || startNetwork!=networkRevision) return false;
                     foreach(Target t in config.apps.Where(t=>t.enabled && sessions.Any(s=>s.appId==t.id && !s.stopped))) SystemPolicy.Block(t,false);
                     bool resumed=networkIssue!="idle" && sessions.Any(s=>!s.stopped);
-                    healthy=true;reason="";networkIssue="idle";lastVerified=Stopwatch.GetTimestamp();
+                    healthy=true;reason="";networkIssue="idle";probePhase="passed";lastVerified=Stopwatch.GetTimestamp();
                     if(resumed) Log("info","IPv4 已命中允许列表，受保护程序已恢复联网");
                 }
                 return true;
             } catch(Exception e) {
-                lock(state) { checkedAt = DateTimeOffset.Now.ToString("o"); }
+                lock(state) { checkedAt=DateTimeOffset.Now.ToString("o");probePhase="failed"; }
                 PauseNetwork("公网 IPv4 校验失败，已暂停联网 · "+e.GetBaseException().Message,"ip_unavailable");return false;
-            } finally { lock(state) checking=false; nextCheck = Interlocked.Exchange(ref checkRequested,0)==1 ? DateTime.MinValue : started.AddSeconds(config.settings.intervalSeconds); Publish(); }
+            } finally { lock(state) {checking=false;if(probePhase=="checking") probePhase="failed";} nextCheck = Interlocked.Exchange(ref checkRequested,0)==1 ? DateTime.MinValue : started.AddSeconds(config.settings.intervalSeconds); Publish(); }
         }
         Target Find(string id) {
             Target t = config.apps.SingleOrDefault(a => a.id == id);

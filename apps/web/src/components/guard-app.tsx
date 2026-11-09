@@ -65,6 +65,7 @@ const initial: Snapshot = {
   admin: false,
   ready: false,
   checking: false,
+  probe: { round: 0, attempt: 0, phase: "idle" },
   networkIssue: "idle",
   nativeVersion,
   ipSource: claudeIpv4Endpoint,

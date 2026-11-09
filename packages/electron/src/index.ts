@@ -1,7 +1,7 @@
 import { z } from "zod";
 
 import { extensionVersionSchema } from "./extension-version.ts";
-import { allowedIpsSchema } from "./ipv4-policy.ts";
+import { allowedIpsSchema, ipv4Attempts } from "./ipv4-policy.ts";
 export {
   ipv4Attempts,
   ipv4AttemptTimeoutMs,
@@ -13,8 +13,8 @@ export { formatIPText } from "./ip-display.ts";
 export { extensionVersionSchema, isNewerExtensionVersion } from "./extension-version.ts";
 export { claudeDesktopFamilies, isClaudeDesktopPath } from "./claude-desktop.ts";
 
-export const nativeVersion = "0.9.8";
-export const nativeProtocol = 9;
+export const nativeVersion = "0.9.9";
+export const nativeProtocol = 10;
 export const browserExtensionId = "blmgamidelconfabgilaacbkokomegep";
 export const browserHostName = "com.ipguard.browser";
 export const browserStateSchema = z
@@ -145,11 +145,18 @@ export const adapterSchema = z.object({
   ipv4: z.boolean(),
   error: z.string(),
 });
+export const probeStateSchema = z.object({
+  round: z.number().int().nonnegative(),
+  attempt: z.number().int().min(0).max(ipv4Attempts),
+  phase: z.enum(["idle", "checking", "passed", "failed"]),
+});
+export type ProbeState = z.infer<typeof probeStateSchema>;
 export const snapshotSchema = z.object({
   online: z.boolean(),
   admin: z.boolean(),
   ready: z.boolean(),
   checking: z.boolean(),
+  probe: probeStateSchema,
   networkIssue: z.enum(["idle", "checking", "ip_changed", "ip_unavailable", "enforcement_failed"]),
   nativeVersion: z.literal(nativeVersion),
   ipSource: z.literal(claudeIpv4Endpoint),

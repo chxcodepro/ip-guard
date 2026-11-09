@@ -33,6 +33,7 @@ namespace IpGuard {
         bool ipsVisible;
         string description="";
         string noticeMode="stopped";
+        ProbeState noticeProbe=new ProbeState();
         string name, currentIp="", expectedIp="", reason="", phase="running";
         int expectedCount;
         double completed=-1;
@@ -136,15 +137,29 @@ namespace IpGuard {
                 if(!Visible) Show();Activate();ackButton.Focus();Invalidate();
             });
         }
+        public void UpdateProtectionProgress(ProtectionNotice data) {
+            Post(()=>{
+                if(!notification || noticeMode!="paused") return;
+                noticeProbe=data.probe;currentIp=data.currentIp;expectedCount=data.expectedIps.Length;expectedIp=String.Join("、",data.expectedIps);
+                DescribeNotice(data);Invalidate();
+            });
+        }
+        string ProbeCaption() {
+            if(noticeProbe.round==0) return "";
+            string state=noticeProbe.phase=="checking" ? "检测中" : noticeProbe.phase=="passed" ? "校验通过" : noticeProbe.phase=="failed" ? "本轮未通过" : "等待检测";
+            return "第 "+noticeProbe.round+" 轮 · "+(noticeProbe.attempt>0 ? noticeProbe.attempt+"/"+BuildInfo.ProbeAttempts+" 次 · " : "")+state;
+        }
+        void DescribeNotice(ProtectionNotice data) {Describe(name+"。受影响："+String.Join("、",data.apps)+"。"+ProbeCaption()+"。"+reason+"。当前 IP："+currentIp+"，锁定 IP："+expectedIp);}
         void ApplyProtectionNotice(ProtectionNotice data) {
                 ipsVisible=false;ipButton.Text="显示 IP";ipButton.AccessibleName="显示 IP 地址";
                 noticeMode=data.kind=="network_restored" ? "restored" : data.kind=="guard_offline" || data.kind=="enforcement_failed" ? "stopped" : "paused";
+                noticeProbe=data.probe;
                 name=data.kind=="network_restored" ? "允许的出口已恢复" : data.kind=="ip_changed" ? "检测到出口地址变化" : data.kind=="guard_offline" ? "守护连接已中断" : data.kind=="enforcement_failed" ? "连接防护发生故障" : "公网 IPv4 检测暂不可用";
                 currentIp=data.currentIp;expectedCount=data.expectedIps.Length;expectedIp=String.Join("、",data.expectedIps);phase="blocked";
-                reason=noticeMode=="restored" ? "IPv4 已命中允许列表。程序保持运行，未完成的请求请重试。" : noticeMode=="stopped" ? "为保护连接，已停止受控程序。请先恢复 IP Guard 防护，再启动程序。" : data.kind=="ip_changed" ? "当前出口未在允许列表中，已暂停联网。恢复允许的网络后自动恢复。" : "暂时无法确认公网 IPv4，已暂停联网。校验通过后自动恢复。";
+                reason=noticeMode=="restored" ? "联网已恢复，未完成的请求请重试。" : noticeMode=="stopped" ? "为保护连接，已停止受控程序。请先恢复 IP Guard 防护，再启动程序。" : data.kind=="ip_changed" ? "当前 IP 未在允许列表中，校验通过后自动恢复。" : "联网已暂停，校验通过后自动恢复。";
                 steps.Clear();int count=Math.Min(data.apps.Length,6);
                 for(int i=0;i<count;i++) steps.Add(new Step {id="app-"+i,label=i==5 && data.apps.Length>6 ? "另有 "+(data.apps.Length-5)+" 个程序" : data.apps[i],status="ok",detail=noticeMode=="restored" ? "联网已恢复" : noticeMode=="paused" ? "进程保留 · 联网已暂停" : "进程树已结束",appeared=clock.Elapsed.TotalMilliseconds-200});
-                completed=clock.Elapsed.TotalMilliseconds;Describe(name+"。受影响："+String.Join("、",data.apps)+"。"+reason+"。当前 IP："+currentIp+"，锁定 IP："+expectedIp);
+                completed=clock.Elapsed.TotalMilliseconds;DescribeNotice(data);
                 ackButton.Visible=true;firewallButton.Visible=false;openAppButton.Visible=true;Opacity=1;timer.Start();
         }
         void TickScene() {
@@ -223,7 +238,10 @@ namespace IpGuard {
             Label(g,currentIp=="" ? (phase=="blocked" ? "未取得公网 IPv4" : "正在获取公网 IPv4") : currentIp,currentIp=="" ? textFont : ipFont,currentIp=="" ? muted : ink,new RectangleF(250,276,385,34),StringAlignment.Center);
             Label(g,expectedCount>2 ? "允许列表  ·  "+expectedCount+" 个 IPv4" : "锁定 IP  ·  "+(expectedIp=="" ? "未取得" : expectedIp),smallFont,muted,new RectangleF(250,310,385,30),StringAlignment.Center);
             if(phase=="blocked") {
-                Label(g,reason,smallFont,restored ? green : accent,new RectangleF(250,340,398,36));
+                if(notification && noticeMode!="stopped") {
+                    Label(g,ProbeCaption(),smallFont,noticeProbe.phase=="checking" || restored ? green : amber,new RectangleF(250,338,398,20),StringAlignment.Center);
+                    Label(g,reason,smallFont,restored ? green : accent,new RectangleF(250,359,398,20),StringAlignment.Center);
+                } else Label(g,reason,smallFont,red,new RectangleF(250,340,398,36));
             } else Label(g,phase=="complete" ? "校验完成，正在启动" : "正在校验锁定的公网 IPv4",smallFont,muted,new RectangleF(250,378,385,26),StringAlignment.Center);
             base.OnPaint(e);
         }

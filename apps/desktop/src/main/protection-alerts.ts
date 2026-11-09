@@ -4,6 +4,7 @@ import { createInterface } from "node:readline";
 
 import { dialog } from "electron";
 
+import { ipv4Attempts } from "@ip-guard/electron";
 import type { Snapshot } from "@ip-guard/electron";
 
 import { nativePath } from "#src/main/guardian.ts";
@@ -26,6 +27,34 @@ export class ProtectionAlerts {
       if (this.stopped) return;
       const notice = detectProtectionEvent(previous, current, guardian.isStopping);
       if (notice) this.show(notice);
+      else {
+        const viewer = this.viewer;
+        if (
+          !viewer ||
+          viewer.child.exitCode !== null ||
+          !viewer.child.stdin?.writable ||
+          !["ip_changed", "ip_unavailable"].includes(viewer.notice.kind) ||
+          !current.online ||
+          !current.rulesLocked ||
+          current.ready ||
+          !current.running.length
+        )
+          return;
+        const before = viewer.notice.probe;
+        if (
+          before.round === current.probe.round &&
+          before.attempt === current.probe.attempt &&
+          before.phase === current.probe.phase
+        )
+          return;
+        viewer.notice = {
+          ...viewer.notice,
+          probe: current.probe,
+          currentIp: current.currentIp,
+          expectedIps: current.settings.expectedIps,
+        };
+        this.writeNotice(true);
+      }
     });
   }
   private show(notice: ProtectionNotice) {
@@ -46,9 +75,7 @@ export class ProtectionAlerts {
       child.stderr?.on("data", (message: string) =>
         console.error("防护提醒", message.slice(0, 500)),
       );
-      child.stdin?.on("error", () => {
-        if (this.viewer === owned) void this.fallback(owned.notice);
-      });
+      child.stdin?.on("error", (error) => console.error("防护提醒通道", error.message));
       child.on("error", (error) => {
         if (this.viewer !== owned) return;
         this.viewer = undefined;
@@ -62,9 +89,13 @@ export class ProtectionAlerts {
       });
     }
     viewer.notice = notice;
-    const owned = viewer;
-    viewer.child.stdin?.write(`${JSON.stringify(notice)}\n`, (error) => {
-      if (error && this.viewer === owned) void this.fallback(owned.notice);
+    this.writeNotice(false);
+  }
+  private writeNotice(updateOnly: boolean) {
+    const viewer = this.viewer;
+    if (!viewer) return;
+    viewer.child.stdin?.write(`${JSON.stringify({ ...viewer.notice, updateOnly })}\n`, (error) => {
+      if (error && !updateOnly && this.viewer === viewer) void this.fallback(viewer.notice);
     });
   }
   private async fallback(notice: ProtectionNotice) {
@@ -81,7 +112,7 @@ export class ProtectionAlerts {
             : ["guard_offline", "enforcement_failed"].includes(notice.kind)
               ? "受保护程序已停止"
               : "已暂停联网，程序保持运行",
-        detail: `${notice.apps.join("、")}\n${notice.kind === "network_restored" ? "IPv4 已命中允许列表。未完成的请求请重新发送。" : ["guard_offline", "enforcement_failed"].includes(notice.kind) ? "请先恢复 IP Guard 防护，再手动重新启动程序。" : "恢复允许的网络后自动恢复联网。"}`,
+        detail: `${notice.apps.join("、")}\n${notice.probe.round ? `第 ${notice.probe.round} 轮 · ${notice.probe.attempt}/${ipv4Attempts} 次\n` : ""}${notice.kind === "network_restored" ? "IPv4 已命中允许列表。未完成的请求请重新发送。" : ["guard_offline", "enforcement_failed"].includes(notice.kind) ? "请先恢复 IP Guard 防护，再手动重新启动程序。" : "恢复允许的网络后自动恢复联网。"}`,
         buttons: ["知道了", "打开 IP Guard"],
         defaultId: 0,
         cancelId: 0,
