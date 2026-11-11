@@ -79,10 +79,7 @@ namespace IpGuard {
                 changed = detection != message; detection = message;
                 if(networkChanged) {networkRevision++;Interlocked.Exchange(ref checkRequested,1);}
             }
-            if(networkChanged && config.rulesLocked) lock(state) {
-                string issue=networkIssue=="ip_changed" || networkIssue=="ip_unavailable" ? networkIssue : "checking";
-                PauseNetwork("网络发生变化，已暂停联网，正在复核 IPv4",issue);
-            }
+            if(networkChanged && config.rulesLocked) PauseNetwork("网络发生变化，已暂停联网，正在复核 IPv4","checking");
             if(changed) { Log("info",message); Publish(); }
         }
         public void Trip(string why, bool preserveIp = false,string issue="idle") {
@@ -109,6 +106,7 @@ namespace IpGuard {
         void PauseNetwork(string why,string issue,bool preserveIp=false) {
             bool changed;
             lock(state) {
+                if(issue=="checking" && (networkIssue=="ip_changed" || networkIssue=="ip_unavailable")) issue=networkIssue;
                 changed=healthy || networkIssue!=issue;
                 healthy=false;reason=why;networkIssue=issue;pendingBlock=true;
                 if(!preserveIp) currentIp="";
