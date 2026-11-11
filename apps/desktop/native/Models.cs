@@ -20,6 +20,7 @@ namespace IpGuard {
         public bool enabled;
     }
     public sealed class Config {
+        public EgressPolicy egress;
         public Settings settings = new Settings();
         public List<Target> apps = new List<Target>();
         public bool autostart;
@@ -51,6 +52,7 @@ namespace IpGuard {
             if (legacyLock) c.rulesLocked = c.settings.expectedIps!=null && c.settings.expectedIps.Count>0;
             if(c.ipSource!="claude-ai") throw new Exception("IP 来源配置无效，请恢复配置备份。");
             Validate(c.settings,!c.rulesLocked);
+            if(c.egress!=null) c.egress.Validate();
             foreach (Target t in c.apps) Validate(t, false);
             if (c.apps.Select(t => t.id).Distinct().Count() != c.apps.Count) throw new Exception("配置中有重复程序。");
             if (migrate) Save(c);

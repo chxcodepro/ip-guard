@@ -4,12 +4,13 @@ import path from "node:path";
 import { app, BrowserWindow, dialog, ipcMain, shell } from "electron";
 
 import { commandSchema, desktopChannels, isClaudeDesktopPath } from "@ip-guard/electron";
-import type { Reply } from "@ip-guard/electron";
+import type { EgressPolicy, Reply, Snapshot } from "@ip-guard/electron";
 
 import type { BrowserBridge } from "#src/main/browser-bridge.ts";
 import type { ClaudeIPv4 } from "#src/main/claude-ip.ts";
 import { claudeStatus, stopClaudeTrees } from "#src/main/claude-processes.ts";
 import type { CoffeeDiagnostics } from "#src/main/coffee.ts";
+import type { FixedEgress } from "#src/main/fixed-egress.ts";
 import type { Guardian } from "#src/main/guardian.ts";
 import { NativeCommandError } from "#src/main/guardian.ts";
 import { claudePresets } from "#src/main/presets.ts";
@@ -23,12 +24,33 @@ export const setupIpc = (
   claude: ClaudeIPv4,
   updates: ApplicationUpdates,
   browser: BrowserBridge,
+  fixedEgress: FixedEgress,
 ) => {
   updates.on("update", (state) => {
     for (const window of BrowserWindow.getAllWindows())
       window.webContents.send(desktopChannels.appUpdate, state);
   });
   let stoppingClaude = false;
+  let configuringEgress = false;
+  const reconcileEgressFailure = async (
+    target: EgressPolicy | null | undefined,
+    error: unknown,
+  ): Promise<Reply> => {
+    let snapshot: Snapshot;
+    try {
+      snapshot = await guardian.request("status");
+    } catch {
+      fixedEgress.fail("固定出口设置尚未确认，已保持断网；请恢复守护连接后重试");
+      throw error;
+    }
+    if (!snapshot.egress) {
+      await fixedEgress.disable();
+      if (target === null) return { snapshot, egress: fixedEgress.state };
+    } else if (target && snapshot.egress.id === target.id && snapshot.egress.port === target.port) {
+      return { snapshot, egress: fixedEgress.state };
+    } else fixedEgress.fail("固定出口设置未确认，已保持断网；请重新配置或重启通道");
+    throw error;
+  };
   coffee.on("update", (report) => {
     for (const window of BrowserWindow.getAllWindows())
       window.webContents.send(desktopChannels.coffee, report);
@@ -44,6 +66,66 @@ export const setupIpc = (
     )
       throw new Error("Untrusted IPC sender");
     const command = commandSchema.parse(input);
+    if (command.action === "egress:status") return { egress: fixedEgress.state };
+    if (
+      command.action === "egress:import" ||
+      command.action === "egress:enable" ||
+      command.action === "egress:disable" ||
+      command.action === "egress:retry"
+    ) {
+      if (configuringEgress) throw new Error("固定出口配置正在处理中");
+      configuringEgress = true;
+      try {
+        const snapshot = await guardian.request("status");
+        if (command.action === "egress:retry") {
+          if (!snapshot.admin || !snapshot.egress) throw new Error("请先启用独立固定出口");
+          await guardian.request("egress:pause");
+          await fixedEgress.retry(snapshot.egress);
+          return { egress: fixedEgress.state };
+        }
+        if (!snapshot.admin || snapshot.rulesLocked)
+          throw new Error("请先以管理员运行并取消 IP 锁定，再配置固定出口");
+        if (command.action === "egress:import") {
+          if (snapshot.egress) throw new Error("请先关闭现有固定出口，再导入新节点");
+          const selected = await dialog.showOpenDialog({
+            title: "先在 v2rayN 选择节点，再选择其 v2rayN.exe 导入",
+            properties: ["openFile"],
+            filters: [{ name: "v2rayN", extensions: ["exe"] }],
+          });
+          const executable = selected.filePaths[0];
+          if (selected.canceled || !executable) return { cancelled: true };
+          await fixedEgress.importCurrent(executable, command.label);
+          return { egress: fixedEgress.state };
+        }
+        if (command.action === "egress:disable") {
+          fixedEgress.fail("正在关闭固定出口");
+          let next: Snapshot;
+          try {
+            next = await guardian.request("egress:set", { egress: null });
+          } catch (error) {
+            return await reconcileEgressFailure(null, error);
+          }
+          await fixedEgress.disable();
+          return { snapshot: next, egress: fixedEgress.state };
+        }
+        if (snapshot.egress) throw new Error("固定出口已启用，请先关闭后再重新启用");
+        const known = (await claudePresets())
+          .filter((item) => item.status === "ready")
+          .map((item) => item.path.toLowerCase());
+        if (snapshot.apps.some((item) => item.enabled && !known.includes(item.path.toLowerCase())))
+          throw new Error("请先解除其他 EXE 的防护；固定出口目前覆盖三种 Claude");
+        let policy: EgressPolicy | undefined;
+        try {
+          policy = await fixedEgress.prepare();
+          const next = await guardian.request("egress:set", { egress: policy });
+          return { snapshot: next, egress: fixedEgress.state };
+        } catch (error) {
+          return await reconcileEgressFailure(policy, error);
+        }
+      } finally {
+        configuringEgress = false;
+      }
+    }
     if (command.action === "extension:status") return { extension: await browser.status() };
     if (command.action === "extension:setup") {
       await guardian.request("browser:register");

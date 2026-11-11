@@ -727,6 +727,37 @@ textarea::placeholder {
 .update-state.error {
   color: var(--g-danger);
 }
+.egress-import {
+  padding: 0 24px 18px;
+}
+.fixed-egress-panel .setting-row > div > span {
+  display: block;
+  margin-top: 5px;
+  color: var(--g-muted);
+  font-size: 12px;
+}
+.egress-import label {
+  display: block;
+  margin-bottom: 8px;
+  color: var(--g-muted);
+  font-size: 12px;
+}
+.egress-import-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.egress-import-controls input {
+  min-width: 160px;
+  flex: 1;
+}
+.egress-hint {
+  padding: 0 24px 20px;
+  color: var(--g-muted);
+  font-size: 12px;
+  line-height: 1.6;
+}
 .update-progress {
   height: 4px;
   margin: 0 24px 14px;

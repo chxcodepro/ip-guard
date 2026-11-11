@@ -1,7 +1,10 @@
 import { z } from "zod";
 
 import { extensionVersionSchema } from "./extension-version.ts";
+import { egressPolicySchema, egressStateSchema } from "./fixed-egress.ts";
 import { allowedIpsSchema, ipv4Attempts } from "./ipv4-policy.ts";
+export { egressPolicySchema } from "./fixed-egress.ts";
+export type { EgressPolicy, EgressState } from "./fixed-egress.ts";
 export {
   ipv4Attempts,
   ipv4AttemptTimeoutMs,
@@ -13,8 +16,8 @@ export { formatIPText } from "./ip-display.ts";
 export { extensionVersionSchema, isNewerExtensionVersion } from "./extension-version.ts";
 export { claudeDesktopFamilies, isClaudeDesktopPath } from "./claude-desktop.ts";
 
-export const nativeVersion = "0.9.10";
-export const nativeProtocol = 10;
+export const nativeVersion = "0.10.0";
+export const nativeProtocol = 11;
 export const browserExtensionId = "blmgamidelconfabgilaacbkokomegep";
 export const browserHostName = "com.ipguard.browser";
 export const browserStateSchema = z
@@ -152,6 +155,7 @@ export const probeStateSchema = z.object({
 });
 export type ProbeState = z.infer<typeof probeStateSchema>;
 export const snapshotSchema = z.object({
+  egress: egressPolicySchema.nullable(),
   online: z.boolean(),
   admin: z.boolean(),
   ready: z.boolean(),
@@ -179,6 +183,11 @@ export const snapshotSchema = z.object({
   logs: z.array(logSchema),
 });
 export const commandSchema = z.discriminatedUnion("action", [
+  z.object({ action: z.literal("egress:status") }),
+  z.object({ action: z.literal("egress:import"), label: z.string().trim().min(1).max(100) }),
+  z.object({ action: z.literal("egress:enable") }),
+  z.object({ action: z.literal("egress:disable") }),
+  z.object({ action: z.literal("egress:retry") }),
   z.object({ action: z.literal("status") }),
   z.object({ action: z.literal("check") }),
   z.object({ action: z.literal("lock"), settings: settingsSchema }),
@@ -220,6 +229,7 @@ export type ProtectedApp = z.infer<typeof appSchema>;
 export type Snapshot = z.infer<typeof snapshotSchema>;
 export type Command = z.infer<typeof commandSchema>;
 export const replySchema = z.object({
+  egress: egressStateSchema.optional(),
   snapshot: snapshotSchema.optional(),
   selectedPath: z.string().optional(),
   cancelled: z.boolean().optional(),

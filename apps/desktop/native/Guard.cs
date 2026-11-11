@@ -41,9 +41,10 @@ namespace IpGuard {
         string probePhase="idle";
         int checkRequested;
         string detection = "";
+        string egressIssue = "";
         long lastVerified;
         DateTime nextCheck = DateTime.MinValue;
-        public Guard() { config = Data.Load(); wifi = new WifiWatch(why => Observe(why, true)); probe=new ClaudeProbe(Emit); RefreshAdapters(); }
+        public Guard() { config = Data.Load(); SystemPolicy.FixedProxyPort=config.egress==null ? 0 : config.egress.port; wifi = new WifiWatch(why => Observe(why, true)); probe=new ClaudeProbe(Emit); RefreshAdapters(); }
         void Emit(object message) { lock(output) { Console.WriteLine(Data.Json().Serialize(message)); Console.Out.Flush(); } }
         void Log(string level, string message) {
             object entry = new { time = DateTimeOffset.Now.ToString("o"), level = level, message = message };
@@ -59,6 +60,7 @@ namespace IpGuard {
         }
         public object Snapshot() {
             lock(state) return new {
+                egress = config.egress,
                 online = true,
                 admin = SystemPolicy.Admin, ready = healthy, currentIp = currentIp, adapter = NetworkProbe.Adapter,
                 checking=checking, networkIssue=networkIssue, nativeVersion=BuildInfo.Version, ipSource=BuildInfo.Endpoint,
@@ -144,6 +146,7 @@ namespace IpGuard {
                     currentIp=ip;checkedAt=result.checkedAt;NetworkProbe.Adapter=result.adapter ?? "";
                 }
                 if(!config.rulesLocked) { lock(state) { healthy=false; reason="IP 未锁定，请先锁定允许的公网 IPv4"; } return false; }
+                if(config.egress!=null && egressIssue!="") {lock(state) probePhase="failed";PauseNetwork("固定出口策略未就绪 · "+egressIssue,"ip_unavailable");return false;}
                 if(progress!=null) {
                     try {
                         TimeZoneInfo zone=TimeZoneInfo.Local;
@@ -201,7 +204,7 @@ namespace IpGuard {
                     installing=true;
                     SystemPolicy.Block(next,true);SystemPolicy.Intercept(next);
                 }
-                Data.Save(new Config {settings=config.settings,apps=apps,autostart=config.autostart,rulesLocked=config.rulesLocked,networkAdapterId=config.networkAdapterId,networkAdapterName=config.networkAdapterName});
+                Data.Save(new Config {settings=config.settings,apps=apps,autostart=config.autostart,egress=config.egress,rulesLocked=config.rulesLocked,networkAdapterId=config.networkAdapterId,networkAdapterName=config.networkAdapterName});
                 lock(state) {config.apps=apps;staleDesktopPaths.Remove(previous.id);}
             } catch(Exception error) {
                 if(previous.enabled) {
@@ -230,11 +233,21 @@ namespace IpGuard {
             SystemPolicy.RequireAdmin(); StopTarget(t.id);
             if(enabled) {
                 Data.Validate(config.settings); Data.Validate(t, true); RequireClosed(t); SystemPolicy.FirewallHealthy();
-                SystemPolicy.Block(t, true);
-                try { SystemPolicy.Intercept(t); t.enabled = true; Data.Save(config); }
-                catch { SystemPolicy.Unintercept(t); SystemPolicy.RemoveFirewall(t); t.enabled = false; throw; }
+                if(config.egress!=null) {
+                    EgressPolicy.ValidateTarget(t);
+                }
+                try {
+                    if(config.egress!=null && PackagePolicy.IsClaudeDesktop(t.path)) {DesktopProxyPolicy.Apply(config.egress.Url);egressIssue="";}
+                    SystemPolicy.Block(t, true);SystemPolicy.Intercept(t);t.enabled = true;Data.Save(config);
+                }
+                catch {
+                    SystemPolicy.Unintercept(t);SystemPolicy.RemoveFirewall(t);t.enabled = false;
+                    if(config.egress!=null && !config.apps.Any(a=>a.enabled && PackagePolicy.IsClaudeDesktop(a.path))) DesktopProxyPolicy.Restore();
+                    throw;
+                }
             } else {
                 SystemPolicy.Unintercept(t); SystemPolicy.RemoveFirewall(t); t.enabled = false; Data.Save(config);
+                if(config.egress!=null && !config.apps.Any(a=>a.enabled && PackagePolicy.IsClaudeDesktop(a.path))) DesktopProxyPolicy.Restore();
             }
             Log("info", t.name + (enabled ? " · 已接管启动" : " · 已解除防护"));
             }
@@ -245,15 +258,39 @@ namespace IpGuard {
                 if(action == "status") return Snapshot();
                 if(action == "check") { Check(); return Snapshot(); }
                 SystemPolicy.RequireAdmin();
-                if(action == "lock") {
+                if(action == "egress:pause") {
+                    PauseNetwork("固定出口正在重启，已暂停联网","checking");
+                } else if(action == "egress:set") {
+                    if(config.rulesLocked || sessions.Any(s=>!s.stopped)) throw new Exception("请先取消 IP 锁定并停止受保护程序，再修改固定出口。");
+                    EgressPolicy next=input["egress"]==null ? null : Data.Json().Deserialize<EgressPolicy>(Data.Json().Serialize(input["egress"]));
+                    if(next!=null) {
+                        next.Validate();
+                        foreach(Target app in config.apps.Where(a=>a.enabled)) {EgressPolicy.ValidateTarget(app);RequireClosed(app);}
+                    }
+                    EgressPolicy previous=config.egress;
+                    try {
+                        bool desktop=config.apps.Any(a=>a.enabled && PackagePolicy.IsClaudeDesktop(a.path));
+                        DesktopProxyPolicy.Apply(next!=null && desktop ? next.Url : null);
+                        SystemPolicy.FixedProxyPort=next==null ? 0 : next.port;
+                        foreach(Target app in config.apps.Where(a=>a.enabled)) SystemPolicy.Block(app,true);
+                        Data.Save(new Config {settings=config.settings,apps=config.apps,autostart=config.autostart,egress=next,rulesLocked=false,networkAdapterId=config.networkAdapterId,networkAdapterName=config.networkAdapterName});
+                        lock(state) {config.egress=next;egressIssue="";networkRevision++;healthy=false;currentIp="";}
+                    } catch {
+                        SystemPolicy.FixedProxyPort=previous==null ? 0 : previous.port;
+                        bool desktop=config.apps.Any(a=>a.enabled && PackagePolicy.IsClaudeDesktop(a.path));
+                        DesktopProxyPolicy.Apply(previous!=null && desktop ? previous.Url : null);
+                        throw;
+                    }
+                    Log("info",next==null ? "已关闭独立固定出口" : "已固定独立节点 · "+next.label);
+                } else if(action == "lock") {
                     if(config.rulesLocked) throw new Exception("IP 已锁定，请先取消锁定再修改。");
                     Settings s = Data.Json().Deserialize<Settings>(Data.Json().Serialize(input["settings"])); Data.Validate(s);
-                    Data.Save(new Config { settings=s, apps=config.apps, autostart=config.autostart, rulesLocked=true, networkAdapterId=config.networkAdapterId, networkAdapterName=config.networkAdapterName });
+                    Data.Save(new Config { settings=s, apps=config.apps, autostart=config.autostart, egress=config.egress, rulesLocked=true, networkAdapterId=config.networkAdapterId, networkAdapterName=config.networkAdapterName });
                     lock(state) { config.settings = s; config.rulesLocked = true; healthy = false; currentIp = ""; reason = "正在校验锁定的公网 IPv4"; }
                     Log("info", "允许的公网 IPv4 已锁定"); Check();
                 } else if(action == "unlock") {
                     if(!config.rulesLocked) return Snapshot();
-                    Data.Save(new Config { settings=config.settings, apps=config.apps, autostart=config.autostart, rulesLocked=false, networkAdapterId=config.networkAdapterId, networkAdapterName=config.networkAdapterName });
+                    Data.Save(new Config { settings=config.settings, apps=config.apps, autostart=config.autostart, egress=config.egress, rulesLocked=false, networkAdapterId=config.networkAdapterId, networkAdapterName=config.networkAdapterName });
                     lock(state) { config.rulesLocked = false; healthy = false; }
                     Trip("IP 已取消锁定，受保护程序已停止，请重新锁定"); BlockPending();
                 } else if(action == "adapter:set") {
@@ -280,7 +317,7 @@ namespace IpGuard {
                         Target changed=new Target { id=t.id,path=t.path,enabled=t.enabled,name=input["name"] as string,arguments=input["arguments"] as string };
                         Data.Validate(changed,false);
                         List<Target> next=config.apps.Select(a=>a.id==t.id ? changed : a).ToList();
-                        Data.Save(new Config { settings=config.settings,apps=next,autostart=config.autostart,rulesLocked=config.rulesLocked,networkAdapterId=config.networkAdapterId,networkAdapterName=config.networkAdapterName });
+                        Data.Save(new Config { settings=config.settings,apps=next,autostart=config.autostart,egress=config.egress,rulesLocked=config.rulesLocked,networkAdapterId=config.networkAdapterId,networkAdapterName=config.networkAdapterName });
                         lock(state) config.apps=next;
                         Log("info",changed.name+" · 启动配置已更新");
                     }
@@ -449,6 +486,10 @@ namespace IpGuard {
             try { BrowserHost.Register(true); } catch(Exception error) { Log("error","浏览器连接注册失败 · "+error.Message); }
             if(config.apps.Any(t => t.enabled) && SystemPolicy.Admin) {
                 Trip("守护程序已启动，等待重新校验"); BlockPending();
+                if(config.egress!=null && config.apps.Any(t=>t.enabled && PackagePolicy.IsClaudeDesktop(t.path))) {
+                    try {DesktopProxyPolicy.Apply(config.egress.Url);}
+                    catch(Exception error) {egressIssue=error.GetBaseException().Message;Log("error",egressIssue);}
+                }
                 foreach(Target t in config.apps.Where(t => t.enabled)) {
                     if(PackagePolicy.IsClaudeDesktop(t.path) && !File.Exists(t.path)) { staleDesktopPaths.Add(t.id);Log("warning",t.name+" · 安装目录已更新，请点击“更新路径”重新接管");continue; }
                     try { Data.Validate(t,true);SystemPolicy.Intercept(t); }

@@ -117,12 +117,14 @@ namespace IpGuard {
                                 if(packaged) Win32.Check(Win32.DebugActiveProcess(info.pid),"无法接管安装包进程");
                                 else {
                                     string command=String.Join(" ",args.Skip(3).Select(Data.Quote));
+                                    using(EgressEnvironment environment=new EgressEnvironment(config.egress)) {
                                     if(TerminalProcess.IsConsole(exe)) {
                                         TerminalProcess.Attach();
-                                        using(TerminalProcess terminal=new TerminalProcess()) info=terminal.Start(exe,command);
+                                        using(TerminalProcess terminal=new TerminalProcess()) info=terminal.Start(exe,command,environment.pointer,environment.flags);
                                     } else {
                                         Win32.StartupInfo startup=new Win32.StartupInfo(); startup.cb=Marshal.SizeOf(startup);
-                                        Win32.Check(Win32.CreateProcess(exe,new StringBuilder(command),IntPtr.Zero,IntPtr.Zero,false,0x6,IntPtr.Zero,Environment.CurrentDirectory,ref startup,out info),"无法创建受保护程序");
+                                        Win32.Check(Win32.CreateProcess(exe,new StringBuilder(command),IntPtr.Zero,IntPtr.Zero,false,0x6|environment.flags,environment.pointer,Environment.CurrentDirectory,ref startup,out info),"无法创建受保护程序");
+                                    }
                                     }
                                     processOwned=true;
                                 }

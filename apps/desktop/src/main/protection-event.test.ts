@@ -6,6 +6,7 @@ import type { Snapshot } from "@ip-guard/electron";
 import { detectProtectionEvent } from "./protection-event.ts";
 
 const running: Snapshot = {
+  egress: null,
   online: true,
   admin: true,
   ready: true,

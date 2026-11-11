@@ -13,6 +13,7 @@ namespace IpGuard {
         public FirewallDisabledException(string message) : base(message) { }
     }
     public static class SystemPolicy {
+        public static int FixedProxyPort;
         public static readonly string Sid = WindowsIdentity.GetCurrent().User.Value;
         public static readonly string Owner = "IPGuard." + Sid;
         public static readonly string PipeName = "IPGuard-" + Sid;
@@ -98,7 +99,7 @@ namespace IpGuard {
         }
         public static void Block(Target app, bool blocked) {
             RequireAdmin();
-            ConnectionPolicy.Block(app,blocked);
+            ConnectionPolicy.Block(app,blocked,FixedProxyPort);
             // Deployed WFAS rules are retired only after the replacement policy succeeds.
             RemoveRules(Firewall(),app,"out","in","v6out","v6in");
         }
@@ -128,6 +129,7 @@ namespace IpGuard {
         public static void Recover() {
             RequireAdmin();
             ConnectionPolicy.Recover();
+            DesktopProxyPolicy.Restore();
             BrowserHost.Unregister();
             PackagePolicy.Recover();
             foreach (RegistryView view in Views) {

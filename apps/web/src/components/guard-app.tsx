@@ -56,11 +56,13 @@ import { BrowserExtensionPanel } from "#src/components/browser-extension-panel.t
 import { ClaudeControl } from "#src/components/claude-control.tsx";
 import { CoffeePage } from "#src/components/coffee-page.tsx";
 import { EditAppDialog } from "#src/components/edit-app-dialog.tsx";
+import { FixedEgressPanel } from "#src/components/fixed-egress-panel.tsx";
 import { UpdatePanel } from "#src/components/update-panel.tsx";
 
 import "#src/guard.css";
 
 const initial: Snapshot = {
+  egress: null,
   online: false,
   admin: false,
   ready: false,
@@ -1133,6 +1135,12 @@ export function GuardApp() {
                     </select>
                   </div>
                 </section>
+                <FixedEgressPanel
+                  snapshot={snapshot}
+                  busy={busy}
+                  available={available}
+                  onAction={invoke}
+                />
                 <BrowserExtensionPanel
                   busy={busy}
                   available={available}

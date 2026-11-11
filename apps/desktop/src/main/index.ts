@@ -8,6 +8,7 @@ import { BrowserBridge } from "#src/main/browser-bridge.ts";
 import { ClaudeIPv4 } from "#src/main/claude-ip.ts";
 import { CoffeeDiagnostics } from "#src/main/coffee.ts";
 import { defaultApiOrigin } from "#src/main/config.ts";
+import { FixedEgress } from "#src/main/fixed-egress.ts";
 import { Guardian } from "#src/main/guardian.ts";
 import { setupIpc } from "#src/main/ipc.ts";
 import { ProtectionAlerts } from "#src/main/protection-alerts.ts";
@@ -42,6 +43,7 @@ if (apiOrigin === null) {
 
 const claude = new ClaudeIPv4();
 const guardian = new Guardian(claude);
+const fixedEgress = new FixedEgress(claude);
 const coffee = new CoffeeDiagnostics(claude);
 const protectionAlerts = new ProtectionAlerts(guardian, () => {
   const [win] = BrowserWindow.getAllWindows();
@@ -74,8 +76,12 @@ const open = () =>
     background,
   });
 
-const start = () => {
-  setupIpc(devOrigin, guardian, coffee, claude, updates, browserBridge);
+const start = async () => {
+  await fixedEgress.initialize();
+  setupIpc(devOrigin, guardian, coffee, claude, updates, browserBridge, fixedEgress);
+  guardian.on("snapshot", (snapshot) =>
+    fixedEgress.setAllowed(Boolean(snapshot.egress) && snapshot.ready),
+  );
   guardian.start();
   coffee.start();
   updates.start();
@@ -162,11 +168,15 @@ if (app.requestSingleInstanceLock()) {
     protectionAlerts.stop();
     browserBridge.close();
     coffee.stop();
-    void guardian.stop().finally(() => {
-      claude.stop();
-      quittingNative = true;
-      tray?.destroy();
-      app.quit();
+    void guardian.stop().finally(async () => {
+      try {
+        await fixedEgress.stop();
+      } finally {
+        claude.stop();
+        quittingNative = true;
+        tray?.destroy();
+        app.quit();
+      }
     });
   });
 } else {

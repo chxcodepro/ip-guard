@@ -7,6 +7,7 @@ namespace IpGuard {
     public static class Program {
         [MTAThread] public static int Main(string[] args) {
             if(args.Length>0 && args[0].StartsWith("chrome-extension://",StringComparison.Ordinal)) return BrowserHost.Run(args[0]);
+            if(args.Length>0 && args[0]=="egress-core") {try {return EgressCore.Run(args);} catch {return 1;}}
             try {
                 if(args.Length>0 && (args[0]=="guard" || args[0]=="version" || args[0]=="notice")) {
                     Console.SetIn(new StreamReader(Console.OpenStandardInput(),new UTF8Encoding(false)));

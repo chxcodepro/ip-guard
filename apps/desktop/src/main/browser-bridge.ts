@@ -12,6 +12,7 @@ import {
 import type { BrowserState, ExtensionStatus } from "@ip-guard/electron";
 
 import { browserInstallations } from "#src/main/browser-installation.ts";
+import { ClaudeIPv4 } from "#src/main/claude-ip.ts";
 import type { Guardian } from "#src/main/guardian.ts";
 import type { ApplicationUpdates } from "#src/main/updates.ts";
 
@@ -25,6 +26,8 @@ export class BrowserBridge {
   private timer: ReturnType<typeof setInterval> | undefined;
   private guardian: Guardian;
   private updates: ApplicationUpdates;
+  private systemProbe: ClaudeIPv4 | undefined;
+  private systemChecking = false;
   constructor(guardian: Guardian, updates: ApplicationUpdates) {
     this.guardian = guardian;
     this.updates = updates;
@@ -37,39 +40,47 @@ export class BrowserBridge {
   }
   private state(): BrowserState {
     const value = this.guardian.snapshot;
+    const separate = Boolean(value?.egress);
+    const currentIp = separate ? (this.systemProbe?.latest?.ip ?? "") : (value?.currentIp ?? "");
+    const checkedAt = separate
+      ? (this.systemProbe?.latest?.checkedAt ?? "")
+      : (value?.lastChecked ?? "");
+    const checking = separate ? this.systemChecking : (value?.checking ?? false);
     const base: BrowserState = {
       protocol: 1,
       appVersion: nativeVersion,
       latestExtensionVersion: this.latestVersion(),
       phase: "offline",
-      currentIp: value?.currentIp ?? "",
+      currentIp,
       expectedIps: value?.settings.expectedIps ?? [],
-      checkedAt: value?.lastChecked ?? "",
+      checkedAt,
       reason: "请启动 IP Guard",
     };
     if (!value?.online || this.guardian.error) return base;
     if (!value.rulesLocked)
       return { ...base, phase: "unlocked", reason: "请在 IP Guard 中锁定允许的 IPv4" };
-    const age = Date.now() - Date.parse(value.lastChecked);
+    const age = Date.now() - Date.parse(checkedAt);
     if (
-      value.ready &&
-      value.settings.expectedIps.includes(value.currentIp) &&
-      value.currentIp &&
+      (separate || value.ready) &&
+      value.settings.expectedIps.includes(currentIp) &&
+      currentIp &&
       Number.isFinite(age) &&
       age >= -5000 &&
       age <=
-        (value.settings.intervalSeconds + (value.checking ? ipv4ProbeTimeoutMs / 1000 + 2 : 8)) *
-          1000
+        (value.settings.intervalSeconds + (checking ? ipv4ProbeTimeoutMs / 1000 + 2 : 8)) * 1000
     )
       return {
         ...base,
         phase: "allowed",
-        reason: value.checking ? "正在复核 IPv4，保留本次连接" : "IPv4 命中允许列表",
+        reason: checking ? "正在复核 IPv4，保留本次连接" : "IPv4 命中允许列表",
       };
     return {
       ...base,
-      phase: value.checking && !value.currentIp ? "checking" : "blocked",
-      reason: value.reason || "等待新的 IPv4 校验结果",
+      phase: checking && !currentIp ? "checking" : "blocked",
+      reason: separate
+        ? this.systemProbe?.latest?.error ||
+          (currentIp ? "浏览器出口 IPv4 未命中允许列表" : "等待浏览器出口 IPv4 校验")
+        : value.reason || "等待新的 IPv4 校验结果",
     };
   }
   private listen(sid: string) {
@@ -124,6 +135,29 @@ export class BrowserBridge {
     socket.write(`${JSON.stringify({ ...state, expectedIp })}\n`);
   }
   private publish() {
+    const snapshot = this.guardian.snapshot;
+    if (
+      snapshot?.online &&
+      !this.guardian.error &&
+      snapshot.egress &&
+      snapshot.rulesLocked &&
+      this.clients.size &&
+      !this.systemChecking
+    ) {
+      const probe = (this.systemProbe ??= new ClaudeIPv4("ip-guard-browser-ipv4"));
+      if (
+        !probe.latest ||
+        Date.now() - Date.parse(probe.latest.checkedAt) >= snapshot.settings.intervalSeconds * 1000
+      ) {
+        this.systemChecking = true;
+        void probe.check().finally(() => {
+          if (this.systemProbe === probe) {
+            this.systemChecking = false;
+            this.publish();
+          }
+        });
+      }
+    }
     for (const socket of this.clients.keys()) this.send(socket);
   }
   async status(): Promise<ExtensionStatus> {
@@ -151,6 +185,9 @@ export class BrowserBridge {
     };
   }
   close() {
+    this.systemProbe?.stop();
+    this.systemProbe = undefined;
+    this.systemChecking = false;
     clearInterval(this.timer);
     for (const socket of this.clients.keys()) socket.destroy();
     this.clients.clear();
