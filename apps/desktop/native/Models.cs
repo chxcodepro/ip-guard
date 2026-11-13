@@ -89,6 +89,7 @@ namespace IpGuard {
             t.path = Path.GetFullPath(t.path);
             if (t.path.StartsWith(@"\\") || (exists && !File.Exists(t.path))) throw new Exception("请选择本机存在的 EXE 文件。");
             if (t.arguments == null || t.arguments.Length > 4096 || t.arguments.IndexOf('\0') >= 0) throw new Exception("启动参数无效。");
+            if(ClaudeChrome.IsPath(t.path) && t.arguments!="") throw new Exception("专用 Chrome 的启动参数由固定出口管理。");
             string name = Path.GetFileName(t.path).ToLowerInvariant();
             if(name=="ipguard.terminal.exe") throw new Exception("启动门卫保留原启动方式。");
             string[] critical = { "ipguard.native.exe", "ip guard.exe", "explorer.exe", "winlogon.exe", "csrss.exe", "services.exe", "lsass.exe", "svchost.exe", "smss.exe", "wininit.exe", "dwm.exe", "taskmgr.exe", "cmd.exe", "powershell.exe", "pwsh.exe", "conhost.exe", "reg.exe", "netsh.exe", "schtasks.exe", "rundll32.exe" };

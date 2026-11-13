@@ -24,6 +24,7 @@ namespace IpGuard {
         static RegistryView[] Views { get { return new[] { RegistryView.Registry64, RegistryView.Registry32 }; } }
         public static void Intercept(Target app) {
             RequireAdmin(); Data.Validate(app, true);
+            if(ClaudeChrome.IsPath(app.path)) return; // Chrome sandbox workers share this image; only the explicit root entry uses the launch gate.
             PackageIdentity package=PackagePolicy.Find(app.path);
             if(package!=null) { Unintercept(app); PackagePolicy.Enable(app,package); return; }
             string debugger=TerminalProcess.IsConsole(app.path) ? Path.Combine(Path.GetDirectoryName(Exe),"IpGuard.Terminal.exe") : Exe;
@@ -53,6 +54,7 @@ namespace IpGuard {
         }
         public static void Unintercept(Target app) {
             RequireAdmin();
+            if(ClaudeChrome.IsPath(app.path)) return;
             PackagePolicy.Disable(app.id);
             foreach (RegistryView view in Views) {
                 using (RegistryKey root = RegistryKey.OpenBaseKey(RegistryHive.LocalMachine, view))

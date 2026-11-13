@@ -15,6 +15,7 @@
 - **原终端体验**：保留控制台输入输出、工作目录、环境及退出码；同一受保护进程树的内部调用复用首次许可。
 - **Claude 安装识别**：提供 npm、独立原生安装版和 Desktop 路径预设，也支持手动添加 EXE。
 - **Claude 固定出口**：从 v2rayN 导入一个节点独立运行，三种 Claude 仅能连接专用代理端口；其他软件继续使用 v2rayN 主节点。
+- **Claude in Chrome 专用窗口**：复制已安装的 Chrome 程序，使用独立资料与固定出口，保留原 Chrome；识别官方插件安装状态并提供安装入口。
 - **程序管理**：编辑名称与启动参数，查看运行状态，确认后停止 Claude 进程树。
 - **浏览器防护**：Chrome / Edge 扩展保护 `claude.ai` 及其子域，显示安装和运行状态。
 - **网络诊断**：展示 IPv6、网卡、DNS、时区、地区、连通性和风险属性。
@@ -107,7 +108,7 @@
 
 ## Claude 固定出口
 
-适用于 Claude Desktop、npm Claude Code 与独立原生 `claude.exe`。该模式使用程序专用代理和系统 WFP 过滤，保留原终端，系统代理与 v2rayN 配置保持原样，无需额外网络驱动。
+适用于 Claude Desktop、npm Claude Code、独立原生 `claude.exe` 与专用 Chrome。该模式使用程序专用代理和系统 WFP 过滤，保留原终端，系统代理与 v2rayN 配置保持原样，无需额外网络驱动。
 
 1. 在 v2rayN 将需要固定的节点设为当前活动节点。请选择服务端提供固定公网 IPv4 的节点。
 2. 保存 Claude 会话，在 IP Guard 取消 IP 锁定；此操作会停止受保护程序。
@@ -124,6 +125,21 @@
 固定节点的公网 IPv4 稳定性由节点服务端保障；供应商内部 NAT 或分流更换出口时，仍由后台检测发现。过滤范围为明确保护的 EXE 路径，其他 EXE 的工具、Cowork 虚拟环境、SSH 远端与系统浏览器使用各自网络路径。浏览器扩展独立检查系统代理出口，地址可能与桌面固定出口不同。
 
 升级保留原防护模式，固定出口由用户主动启用。回退到 0.9.x 前，请先关闭固定出口，或使用 0.10.0 及更新版本的恢复工具清理专用策略。
+
+## Claude in Chrome 专用窗口
+
+1. 在「防护设置 → Claude 固定出口」配置节点并锁定允许的 IPv4。
+2. 在「Claude in Chrome」点击「准备专用窗口」。程序从已安装的正式版 Google Chrome 复制程序文件，并自动添加受保护程序。
+3. 点击「开启防护」，再点击「安装 Claude 插件」。官方 Chrome 商店在专用窗口中打开，在该窗口安装并登录 [Claude in Chrome](https://chromewebstore.google.com/detail/claude/fcoeoabgfenejglbffodgkkbkcdhcgfn)。
+4. 安装记录可读后，按钮变为「打开专用窗口」。后续请从此入口使用；停止窗口可在「受保护程序」中操作。
+
+专用窗口的程序和资料分别位于 `%LOCALAPPDATA%/IPGuard/browser/Application/` 与 `browser/User Data/`，原 Chrome 的资料不复制。其浏览器网络仅能访问固定代理入口，直连、其他代理、IPv6 和 UDP 被封锁；网络暂停保留进程，通过 IPv4 校验后恢复。专用参数由程序管理，编辑窗口仅开放名称。
+
+原 Chrome、Edge 和原窗口中的官方 Claude 插件保持原行为。普通浏览器的 `claude.ai` 网页仍可由下方的 **IP Guard 网页扩展**保护，它与官方 Claude in Chrome 为两个扩展。
+
+原 Chrome 有新版时显示更新入口。先解除专用窗口的防护，再更新其程序文件；专用资料与账号保留。复制失败会保留旧版本，较旧来源不会覆盖较新副本。该功能保留 Chrome 自带安全机制，不安装 WSL、额外沙箱、虚拟机或新网络驱动。
+
+此版本控制专用 Chrome 路径下的浏览器进程。插件调用的其他原生助手、Claude 启动的其他 EXE、共享系统服务和本地 Cowork 虚拟机仍需独立策略；完整命令进程树过滤尚未集成。云端命令不在本机防护范围。
 
 ## 浏览器扩展
 
@@ -181,6 +197,8 @@ GitHub 返回 504 等临时错误或连接中断时，检查最多尝试三次�
 | `events.jsonl`        | 运行事件；达到 1 MB 后轮换到 `events.jsonl.1` |
 | `guardian-errors.log` | 守护异常退出信息与标准错误尾部                |
 | `egress/<节点 ID>/` | 独立核心与加密节点快照；由固定出口配置引用 |
+| `browser/Application/` | 专用 Chrome 程序快照及版本记录 |
+| `browser/User Data/` | 专用浏览器资料；更新程序文件时保留 |
 
 界面显示当前会话最近 200 条事件，可从「事件日志」打开数据目录。
 

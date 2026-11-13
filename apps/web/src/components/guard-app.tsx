@@ -53,6 +53,7 @@ import {
 } from "@ip-guard/electron";
 
 import { BrowserExtensionPanel } from "#src/components/browser-extension-panel.tsx";
+import { ClaudeChromePanel } from "#src/components/claude-chrome-panel.tsx";
 import { ClaudeControl } from "#src/components/claude-control.tsx";
 import { CoffeePage } from "#src/components/coffee-page.tsx";
 import { EditAppDialog } from "#src/components/edit-app-dialog.tsx";
@@ -771,7 +772,7 @@ export function GuardApp() {
                   <button
                     type="button"
                     className="icon-btn"
-                    title="编辑启动参数"
+                    title="编辑程序"
                     aria-label={`编辑 ${target.name}`}
                     disabled={busy || !available}
                     onClick={() => setEditing(target)}
@@ -1136,6 +1137,12 @@ export function GuardApp() {
                   </div>
                 </section>
                 <FixedEgressPanel
+                  snapshot={snapshot}
+                  busy={busy}
+                  available={available}
+                  onAction={invoke}
+                />
+                <ClaudeChromePanel
                   snapshot={snapshot}
                   busy={busy}
                   available={available}

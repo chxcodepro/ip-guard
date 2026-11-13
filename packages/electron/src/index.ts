@@ -1,7 +1,14 @@
 import { z } from "zod";
 
+import { claudeChromeStateSchema } from "./claude-chrome.ts";
 import { extensionVersionSchema } from "./extension-version.ts";
 import { egressPolicySchema, egressStateSchema } from "./fixed-egress.ts";
+export {
+  claudeChromeExtensionId,
+  claudeChromeStoreUrl,
+  isClaudeChromePath,
+} from "./claude-chrome.ts";
+export type { ClaudeChromeState } from "./claude-chrome.ts";
 import { allowedIpsSchema, ipv4Attempts } from "./ipv4-policy.ts";
 export { egressPolicySchema } from "./fixed-egress.ts";
 export type { EgressPolicy, EgressState } from "./fixed-egress.ts";
@@ -16,7 +23,7 @@ export { formatIPText } from "./ip-display.ts";
 export { extensionVersionSchema, isNewerExtensionVersion } from "./extension-version.ts";
 export { claudeDesktopFamilies, isClaudeDesktopPath } from "./claude-desktop.ts";
 
-export const nativeVersion = "0.10.0";
+export const nativeVersion = "0.11.0";
 export const nativeProtocol = 11;
 export const browserExtensionId = "blmgamidelconfabgilaacbkokomegep";
 export const browserHostName = "com.ipguard.browser";
@@ -183,6 +190,9 @@ export const snapshotSchema = z.object({
   logs: z.array(logSchema),
 });
 export const commandSchema = z.discriminatedUnion("action", [
+  z.object({ action: z.literal("chrome:status") }),
+  z.object({ action: z.literal("chrome:prepare") }),
+  z.object({ action: z.literal("chrome:open"), install: z.boolean() }),
   z.object({ action: z.literal("egress:status") }),
   z.object({ action: z.literal("egress:import"), label: z.string().trim().min(1).max(100) }),
   z.object({ action: z.literal("egress:enable") }),
@@ -229,6 +239,7 @@ export type ProtectedApp = z.infer<typeof appSchema>;
 export type Snapshot = z.infer<typeof snapshotSchema>;
 export type Command = z.infer<typeof commandSchema>;
 export const replySchema = z.object({
+  chrome: claudeChromeStateSchema.optional(),
   egress: egressStateSchema.optional(),
   snapshot: snapshotSchema.optional(),
   selectedPath: z.string().optional(),

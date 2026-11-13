@@ -7,10 +7,17 @@ import { commandSchema, desktopChannels, isClaudeDesktopPath } from "@ip-guard/e
 import type { EgressPolicy, Reply, Snapshot } from "@ip-guard/electron";
 
 import type { BrowserBridge } from "#src/main/browser-bridge.ts";
+import {
+  claudeChromePath,
+  claudeChromeStatus,
+  installedChromePath,
+  prepareClaudeChrome,
+} from "#src/main/claude-chrome.ts";
 import type { ClaudeIPv4 } from "#src/main/claude-ip.ts";
 import { claudeStatus, stopClaudeTrees } from "#src/main/claude-processes.ts";
 import type { CoffeeDiagnostics } from "#src/main/coffee.ts";
 import type { FixedEgress } from "#src/main/fixed-egress.ts";
+import { guardDataDirectory } from "#src/main/guard-data.ts";
 import type { Guardian } from "#src/main/guardian.ts";
 import { NativeCommandError } from "#src/main/guardian.ts";
 import { claudePresets } from "#src/main/presets.ts";
@@ -32,6 +39,7 @@ export const setupIpc = (
   });
   let stoppingClaude = false;
   let configuringEgress = false;
+  let preparingChrome = false;
   const reconcileEgressFailure = async (
     target: EgressPolicy | null | undefined,
     error: unknown,
@@ -66,6 +74,62 @@ export const setupIpc = (
     )
       throw new Error("Untrusted IPC sender");
     const command = commandSchema.parse(input);
+    if (command.action === "chrome:status") return { chrome: await claudeChromeStatus() };
+    if (command.action === "chrome:prepare") {
+      if (preparingChrome) throw new Error("专用 Chrome 正在准备中");
+      preparingChrome = true;
+      try {
+        const snapshot = await guardian.request("status");
+        if (!snapshot.admin) throw new Error("请以管理员身份运行 IP Guard");
+        const existing = snapshot.apps.find(
+          (item) => item.path.toLowerCase() === claudeChromePath().toLowerCase(),
+        );
+        if (existing?.enabled)
+          throw new Error("请先解除专用 Chrome 的防护后再更新，原 Chrome 保持不动");
+        let chrome = await claudeChromeStatus();
+        if (!chrome.prepared || existing) {
+          await guardian.request("chrome:closed");
+          let source = await installedChromePath();
+          if (!source) {
+            const selected = await dialog.showOpenDialog({
+              title: "选择 Google Chrome 的 chrome.exe",
+              properties: ["openFile"],
+              filters: [{ name: "Google Chrome", extensions: ["exe"] }],
+            });
+            source = selected.filePaths[0] ?? "";
+            if (selected.canceled || !source) return { cancelled: true };
+          }
+          chrome = await prepareClaudeChrome(source);
+        }
+        const next = existing
+          ? await guardian.request("status")
+          : await guardian.request("add", {
+              app: {
+                id: crypto.randomUUID(),
+                name: "Claude in Chrome",
+                path: chrome.path,
+                arguments: "",
+                enabled: false,
+              },
+            });
+        return { chrome, snapshot: next };
+      } finally {
+        preparingChrome = false;
+      }
+    }
+    if (command.action === "chrome:open") {
+      const snapshot = await guardian.request("status");
+      const target = snapshot.apps.find(
+        (item) => item.path.toLowerCase() === claudeChromePath().toLowerCase(),
+      );
+      if (!target) throw new Error("请先准备专用 Chrome");
+      return {
+        snapshot: await guardian.request("start", {
+          targetId: target.id,
+          browserInstall: command.install,
+        }),
+      };
+    }
     if (command.action === "egress:status") return { egress: fixedEgress.state };
     if (
       command.action === "egress:import" ||
@@ -112,8 +176,11 @@ export const setupIpc = (
         const known = (await claudePresets())
           .filter((item) => item.status === "ready")
           .map((item) => item.path.toLowerCase());
+        known.push(claudeChromePath().toLowerCase());
         if (snapshot.apps.some((item) => item.enabled && !known.includes(item.path.toLowerCase())))
-          throw new Error("请先解除其他 EXE 的防护；固定出口目前覆盖三种 Claude");
+          throw new Error(
+            "固定出口目前支持 Claude Desktop、Claude Code 与专用 Chrome，请先解除其他 EXE 的防护",
+          );
         let policy: EgressPolicy | undefined;
         try {
           policy = await fixedEgress.prepare();
@@ -228,12 +295,7 @@ export const setupIpc = (
       return result.canceled ? { cancelled: true } : { selectedPath: result.filePaths[0] };
     }
     if (command.action === "logs") {
-      const error = await shell.openPath(
-        path.join(
-          process.env.LOCALAPPDATA ?? path.join(app.getPath("home"), "AppData/Local"),
-          "IPGuard",
-        ),
-      );
+      const error = await shell.openPath(guardDataDirectory());
       if (error) throw new Error(error);
       return {};
     }

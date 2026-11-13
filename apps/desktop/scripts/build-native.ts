@@ -4,6 +4,7 @@ import path from "node:path";
 
 import {
   browserExtensionId,
+  claudeChromeStoreUrl,
   claudeDesktopFamilies,
   claudeIpv4Endpoint,
   ipv4Attempts,
@@ -31,6 +32,7 @@ namespace IpGuard { public static class BuildInfo {
  public const string ExtensionId = ${JSON.stringify(browserExtensionId)};
  public const int Protocol = ${nativeProtocol};
  public const string Endpoint = ${JSON.stringify(claudeIpv4Endpoint)};
+ public const string ClaudeChromeStoreUrl = ${JSON.stringify(claudeChromeStoreUrl)};
  public const int ProbeTimeoutMs = ${ipv4ProbeTimeoutMs};
  public const int ProbeAttempts = ${ipv4Attempts};
  public const int MaxAllowedIps = ${maxAllowedIps};

@@ -86,7 +86,6 @@ export function FixedEgressPanel({
         </span>
         <div>
           <strong>{snapshot.egress?.label ?? state.profile?.label ?? "独立节点"}</strong>
-          <span>Desktop · npm · 原生 Claude Code</span>
         </div>
         <div className="update-actions">
           {enabled ? (
@@ -155,13 +154,6 @@ export function FixedEgressPanel({
       >
         {status}
       </div>
-      {(snapshot.rulesLocked || !enabled) && (
-        <div className="egress-hint">
-          {snapshot.rulesLocked
-            ? "先取消 IP 锁定，再修改固定出口"
-            : "在 v2rayN 选定节点后导入，后续切换主节点不影响此通道"}
-        </div>
-      )}
     </section>
   );
 }

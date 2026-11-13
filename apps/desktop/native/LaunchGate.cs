@@ -117,6 +117,7 @@ namespace IpGuard {
                                 if(packaged) Win32.Check(Win32.DebugActiveProcess(info.pid),"无法接管安装包进程");
                                 else {
                                     string command=String.Join(" ",args.Skip(3).Select(Data.Quote));
+                                    if(ClaudeChrome.IsPath(exe)) command=ClaudeChrome.Command(config.egress,args.Length==5 ? args[4] : ClaudeChrome.HomeUrl);
                                     using(EgressEnvironment environment=new EgressEnvironment(config.egress)) {
                                     if(TerminalProcess.IsConsole(exe)) {
                                         TerminalProcess.Attach();

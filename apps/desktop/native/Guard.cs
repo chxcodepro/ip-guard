@@ -173,6 +173,7 @@ namespace IpGuard {
             if(t == null) throw new Exception("找不到该程序。"); return t;
         }
         static void RequireClosed(Target t) {
+            if(ClaudeChrome.IsPath(t.path)) {ClaudeChrome.RequireClosed();return;}
             foreach(Process p in Process.GetProcessesByName(Path.GetFileNameWithoutExtension(t.path))) using(p) {
                 try { if(String.Equals(p.MainModule.FileName, t.path, StringComparison.OrdinalIgnoreCase)) throw new InvalidOperationException("请先关闭 " + t.name + " 的所有进程。"); }
                 catch(System.ComponentModel.Win32Exception) { throw new Exception("请先关闭同名进程，再启用防护。"); }
@@ -182,6 +183,7 @@ namespace IpGuard {
             lock(state) foreach(Session s in sessions.Where(s => s.appId == id)) { s.stopped = true; Win32.TerminateJobObject(s.job, 1); }
         }
         string PathIssue(Target target) {
+            if(ClaudeChrome.IsPath(target.path)) return !File.Exists(target.path) ? "请先准备专用 Chrome" : config.egress==null ? "请先启用固定出口" : "";
             return PackagePolicy.IsClaudeDesktop(target.path) && (staleDesktopPaths.Contains(target.id) || !File.Exists(target.path)) ? "安装目录已更新，请先更新路径" : "";
         }
         void Relocate(Target previous,string path) {
@@ -228,6 +230,7 @@ namespace IpGuard {
         void Protect(Target t, bool enabled) {
             lock(state) {
             if(enabled && !config.rulesLocked) throw new Exception("请先锁定允许的公网 IPv4，再启用程序防护。");
+            if(enabled && ClaudeChrome.IsPath(t.path) && config.egress==null) throw new Exception("请先启用固定出口，再保护专用 Chrome。");
             SystemPolicy.RequireAdmin(); StopTarget(t.id);
             if(enabled) {
                 Data.Validate(config.settings); Data.Validate(t, true); RequireClosed(t); SystemPolicy.FirewallHealthy();
@@ -256,7 +259,9 @@ namespace IpGuard {
                 if(action == "status") return Snapshot();
                 if(action == "check") { Check(); return Snapshot(); }
                 SystemPolicy.RequireAdmin();
-                if(action == "egress:pause") {
+                if(action == "chrome:closed") {
+                    ClaudeChrome.RequireClosed();
+                } else if(action == "egress:pause") {
                     PauseNetwork("固定出口正在重启，已暂停联网","checking");
                 } else if(action == "egress:set") {
                     if(config.rulesLocked || sessions.Any(s=>!s.stopped)) throw new Exception("请先取消 IP 锁定并停止受保护程序，再修改固定出口。");
@@ -322,11 +327,16 @@ namespace IpGuard {
                     else if(action == "remove") { if(t.enabled) Protect(t, false); lock(state) {config.apps.Remove(t);staleDesktopPaths.Remove(t.id);} Data.Save(config); }
                     else if(action == "stop") { lock(state) {StopTarget(t.id); SystemPolicy.Block(t,true);} Log("info", t.name + " · 已停止并封锁"); }
                     else if(action == "start") {
-                        if(PathIssue(t)!="") throw new Exception("Claude Desktop 安装目录已更新，请先点击“更新路径”。");
+                        if(PathIssue(t)!="") throw new Exception(PathIssue(t));
                         if(!config.rulesLocked) throw new Exception("请先锁定允许的公网 IPv4。");
                         if(!t.enabled) throw new Exception("请先启用该程序的防护。");
                         Data.Validate(t, true);
-                        if(PackagePolicy.Find(t.path)!=null) Background(() => {
+                        if(ClaudeChrome.IsPath(t.path)) {
+                            bool install=input.ContainsKey("browserInstall") && input["browserInstall"] is bool && (bool)input["browserInstall"];
+                            string url=install ? BuildInfo.ClaudeChromeStoreUrl : ClaudeChrome.HomeUrl;
+                            string arguments="gate "+Data.Quote(SystemPolicy.Sid)+" "+Data.Quote(t.id)+" "+Data.Quote(t.path)+" "+Data.Quote(url);
+                            Process.Start(new ProcessStartInfo(SystemPolicy.Exe,arguments) {UseShellExecute=false,CreateNoWindow=true,WorkingDirectory=Path.GetDirectoryName(t.path)});
+                        } else if(PackagePolicy.Find(t.path)!=null) Background(() => {
                             try { PackagePolicy.Activate(t); }
                             catch(Exception e) { Log("warning", t.name + " · 安装包激活未完成 · " + e.GetBaseException().Message); Publish(); }
                         });
@@ -429,6 +439,7 @@ namespace IpGuard {
                     lock(actions) {
                         target = Find(request["id"] as string);
                         if(!target.enabled || !String.Equals(target.path,request["path"] as string,StringComparison.OrdinalIgnoreCase)) throw new Exception("该程序未启用启动防护。");
+                        if(PathIssue(target)!="") throw new Exception(PathIssue(target));
                         writer.WriteLine(Data.Json().Serialize(new { type="context", name=target.name, expectedIps=config.settings.expectedIps }));
                         if(!config.rulesLocked) throw new Exception("请先锁定允许的公网 IPv4。");
                         if(PackagePolicy.Find(target.path)!=null) {
@@ -489,6 +500,7 @@ namespace IpGuard {
                     catch(Exception error) {egressIssue=error.GetBaseException().Message;Log("error",egressIssue);}
                 }
                 foreach(Target t in config.apps.Where(t => t.enabled)) {
+                    if(ClaudeChrome.IsPath(t.path) && !File.Exists(t.path)) {Log("warning",t.name+" · 请重新准备专用 Chrome");continue;}
                     if(PackagePolicy.IsClaudeDesktop(t.path) && !File.Exists(t.path)) { staleDesktopPaths.Add(t.id);Log("warning",t.name+" · 安装目录已更新，请点击“更新路径”重新接管");continue; }
                     try { Data.Validate(t,true);SystemPolicy.Intercept(t); }
                     catch(PackageUnavailableException) {

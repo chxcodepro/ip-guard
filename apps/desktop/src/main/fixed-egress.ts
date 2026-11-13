@@ -6,7 +6,7 @@ import type { Server, Socket } from "node:net";
 import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 
-import { app, safeStorage } from "electron";
+import { safeStorage } from "electron";
 import { z } from "zod";
 
 import type { EgressPolicy, EgressState } from "@ip-guard/electron";
@@ -15,6 +15,7 @@ import { egressPolicySchema } from "@ip-guard/electron";
 import type { ClaudeIPv4 } from "./claude-ip.ts";
 import { coreConfiguration, snapshotV2rayNode } from "./egress-config.ts";
 import type { NodeSnapshot } from "./egress-config.ts";
+import { guardDataDirectory } from "./guard-data.ts";
 import { nativePath } from "./guardian.ts";
 
 const profileSchema = z.object({
@@ -24,10 +25,8 @@ const profileSchema = z.object({
   outbound: z.record(z.string(), z.unknown()),
 });
 type Profile = z.infer<typeof profileSchema>;
-const directory = () =>
-  path.join(process.env.LOCALAPPDATA ?? path.join(app.getPath("home"), "AppData/Local"), "IPGuard");
 const profileDirectory = (id: string) => {
-  const root = path.resolve(directory(), "egress");
+  const root = path.resolve(guardDataDirectory(), "egress");
   const folder = path.resolve(root, z.uuid().parse(id));
   if (path.dirname(folder) !== root) throw new Error("节点目录无效");
   return folder;
@@ -68,7 +67,7 @@ export class FixedEgress {
   private async restore() {
     try {
       const source: unknown = JSON.parse(
-        await readFile(path.join(directory(), "settings.json"), "utf8"),
+        await readFile(path.join(guardDataDirectory(), "settings.json"), "utf8"),
       );
       const policy = z.object({ egress: egressPolicySchema.nullish() }).parse(source).egress;
       if (policy) await this.start(policy);

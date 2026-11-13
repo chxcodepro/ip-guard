@@ -18,6 +18,7 @@ namespace IpGuard {
             if(!Guid.TryParseExact(id,"D",out parsed) || String.IsNullOrWhiteSpace(label) || label.Length>100 || port<1024 || port>65535) throw new Exception("固定出口配置无效。");
         }
         public static void ValidateTarget(Target target) {
+            if(ClaudeChrome.IsPath(target.path)) return;
             if(PackagePolicy.IsClaudeDesktop(target.path)) {
                 FileVersionInfo version=FileVersionInfo.GetVersionInfo(target.path);
                 if(new Version(version.FileMajorPart,version.FileMinorPart,Math.Max(0,version.FileBuildPart))<new Version(1,44121,1)) throw new Exception("此 Claude Desktop 版本尚未支持固定代理策略，请先升级 Desktop。");

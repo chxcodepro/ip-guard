@@ -85,7 +85,7 @@ export function BrowserExtensionPanel({
           <ShieldCheck size={19} />
         </span>
         <div>
-          <strong>Claude 网页扩展</strong>
+          <strong>IP Guard 网页扩展</strong>
           <span>
             {status.phase === "running"
               ? `${status.connections} 个浏览器连接`
