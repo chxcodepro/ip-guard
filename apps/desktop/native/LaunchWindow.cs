@@ -176,7 +176,12 @@ namespace IpGuard {
                 else if(motion && now>=end-200) Opacity=Math.Max(0.01,(end-now)/200);
                 else Opacity=1;
             }
-            if(phase=="blocked" && (steps.Count==0 || now>=steps[steps.Count-1].appeared+170)) timer.Stop();
+            if(phase=="blocked" && notification && noticeMode=="restored") {
+                double end=completed+3000;
+                if(now>=end) { Hide(); timer.Stop(); }
+                else if(motion && now>=end-200) Opacity=Math.Max(0.01,(end-now)/200);
+                else Opacity=1;
+            } else if(phase=="blocked" && (steps.Count==0 || now>=steps[steps.Count-1].appeared+170)) timer.Stop();
             if(Visible) Invalidate();
         }
         protected override void OnFormClosing(FormClosingEventArgs e) { if(!finishing) Cancel(); base.OnFormClosing(e); }
