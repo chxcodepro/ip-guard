@@ -29,7 +29,7 @@ export { programProtectionStatus } from "./program-protection-status.ts";
 export { extensionVersionSchema, isNewerExtensionVersion } from "./extension-version.ts";
 export { claudeDesktopFamilies, isClaudeDesktopPath } from "./claude-desktop.ts";
 
-export const nativeVersion = "0.12.0";
+export const nativeVersion = "0.12.1";
 export const nativeProtocol = 18;
 export const browserExtensionId = "blmgamidelconfabgilaacbkokomegep";
 export const browserHostName = "com.ipguard.browser";
