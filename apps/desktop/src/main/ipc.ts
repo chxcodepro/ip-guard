@@ -4,23 +4,18 @@ import path from "node:path";
 import { app, BrowserWindow, dialog, ipcMain, shell } from "electron";
 
 import { commandSchema, desktopChannels, isClaudeDesktopPath } from "@ip-guard/electron";
-import type { EgressPolicy, Reply, Snapshot } from "@ip-guard/electron";
+import type { Reply, Snapshot } from "@ip-guard/electron";
 
 import type { BrowserBridge } from "#src/main/browser-bridge.ts";
-import {
-  claudeChromePath,
-  claudeChromeStatus,
-  installedChromePath,
-  prepareClaudeChrome,
-} from "#src/main/claude-chrome.ts";
 import type { ClaudeIPv4 } from "#src/main/claude-ip.ts";
 import { claudeStatus, stopClaudeTrees } from "#src/main/claude-processes.ts";
 import type { CoffeeDiagnostics } from "#src/main/coffee.ts";
 import type { FixedEgress } from "#src/main/fixed-egress.ts";
 import { guardDataDirectory } from "#src/main/guard-data.ts";
 import type { Guardian } from "#src/main/guardian.ts";
-import { NativeCommandError } from "#src/main/guardian.ts";
+import { NativeCommandError, nativePath } from "#src/main/guardian.ts";
 import { claudePresets } from "#src/main/presets.ts";
+import type { ProxyEnhancement } from "#src/main/proxy-enhancement.ts";
 import { isTrustedUrl } from "#src/main/renderer-route.ts";
 import type { ApplicationUpdates } from "#src/main/updates.ts";
 
@@ -30,8 +25,9 @@ export const setupIpc = (
   coffee: CoffeeDiagnostics,
   claude: ClaudeIPv4,
   updates: ApplicationUpdates,
-  browser: BrowserBridge,
   fixedEgress: FixedEgress,
+  proxyEnhancement: ProxyEnhancement,
+  browser: BrowserBridge,
 ) => {
   updates.on("update", (state) => {
     for (const window of BrowserWindow.getAllWindows())
@@ -39,11 +35,8 @@ export const setupIpc = (
   });
   let stoppingClaude = false;
   let configuringEgress = false;
-  let preparingChrome = false;
-  const reconcileEgressFailure = async (
-    target: EgressPolicy | null | undefined,
-    error: unknown,
-  ): Promise<Reply> => {
+  let configuringKernel = false;
+  const reconcileEgressFailure = async (error: unknown): Promise<Reply> => {
     let snapshot: Snapshot;
     try {
       snapshot = await guardian.request("status");
@@ -53,8 +46,6 @@ export const setupIpc = (
     }
     if (!snapshot.egress) {
       await fixedEgress.disable();
-      if (target === null) return { snapshot, egress: fixedEgress.state };
-    } else if (target && snapshot.egress.id === target.id && snapshot.egress.port === target.port) {
       return { snapshot, egress: fixedEgress.state };
     } else fixedEgress.fail("固定出口设置未确认，已保持断网；请重新配置或重启通道");
     throw error;
@@ -74,69 +65,135 @@ export const setupIpc = (
     )
       throw new Error("Untrusted IPC sender");
     const command = commandSchema.parse(input);
-    if (command.action === "chrome:status") return { chrome: await claudeChromeStatus() };
-    if (command.action === "chrome:prepare") {
-      if (preparingChrome) throw new Error("专用 Chrome 正在准备中");
-      preparingChrome = true;
+    const verifyEnhancement = async () => {
+      const snapshot = await guardian.request("status");
+      if (!snapshot.rulesLocked) throw new Error("请先锁定允许的公网 IPv4");
+      if (snapshot.egress) throw new Error("请先关闭历史独立出口，再使用当前代理增强");
+      await claude.useFixedProxy(proxyEnhancement.probeAddress);
+      const checked = await guardian.request("check");
+      if (!checked.ready) throw new Error(checked.reason || "Claude AI IPv4 尚未通过校验");
+      if (
+        !(await proxyEnhancement.exit.check(
+          checked.settings.expectedIps,
+          proxyEnhancement.probeAddress,
+          true,
+        ))
+      )
+        throw new Error(proxyEnhancement.exit.state.reason);
+      return guardian.request("enhancement:state", {
+        ready: true,
+        reason: proxyEnhancement.exit.state.reason,
+        phase: "passed",
+      });
+    };
+    if (command.action === "proxy:status") return { proxyEnhancement: proxyEnhancement.state };
+    if (command.action === "proxy:configure") {
+      const snapshot = await guardian.request("status");
+      if (snapshot.apps.some((target) => target.enabled && target.enhanced))
+        throw new Error("请先关闭各程序的增强，再修改上游代理");
+      await proxyEnhancement.configure(command.settings);
+      return { proxyEnhancement: proxyEnhancement.state };
+    }
+    if (command.action === "enhance") {
+      const snapshot = await guardian.request("status");
+      const target = snapshot.apps.find((item) => item.id === command.id);
+      if (!target) throw new Error("程序不存在");
+      if (command.enabled) {
+        await proxyEnhancement.refresh();
+        if (proxyEnhancement.state.phase !== "ready") throw new Error(proxyEnhancement.state.error);
+        if (!snapshot.driver.supported)
+          throw new Error("此设备的命令过滤器尚未就绪，请在防护设置安装并查看实验风险");
+      }
+      const answer = await dialog.showMessageBox({
+        type: "warning",
+        title: "本机 IP 防泄露增强",
+        message: `${command.enabled ? "开启" : "关闭"} ${target.name} 的增强？`,
+        detail: command.enabled
+          ? "将停止此程序，自动读取当前 Xray / sing-box 节点并建立仅供受控 Claude 使用的强制代理通道，跟随节点切换；普通应用分流和原代理配置保持。按需安装并加载实验性过滤驱动，封锁此进程树的绕行连接。驱动实机验收尚未完成，曾发生全机断网，建议在隔离测试机使用。"
+          : "将停止此程序以调整过滤范围；基础程序防护保留。其他增强会话需先停止。",
+        buttons: ["取消", command.enabled ? "确认开启" : "关闭增强"],
+        defaultId: 0,
+        cancelId: 0,
+      });
+      if (answer.response !== 1) return { cancelled: true, snapshot };
+      const release = command.enabled ? await proxyEnhancement.acquire() : undefined;
       try {
-        const snapshot = await guardian.request("status");
-        if (!snapshot.admin) throw new Error("请以管理员身份运行 IP Guard");
-        const existing = snapshot.apps.find(
-          (item) => item.path.toLowerCase() === claudeChromePath().toLowerCase(),
-        );
-        if (existing?.enabled)
-          throw new Error("请先解除专用 Chrome 的防护后再更新，原 Chrome 保持不动");
-        let chrome = await claudeChromeStatus();
-        if (!chrome.prepared || existing) {
-          await guardian.request("chrome:closed");
-          let source = await installedChromePath();
-          if (!source) {
-            const selected = await dialog.showOpenDialog({
-              title: "选择 Google Chrome 的 chrome.exe",
-              properties: ["openFile"],
-              filters: [{ name: "Google Chrome", extensions: ["exe"] }],
-            });
-            source = selected.filePaths[0] ?? "";
-            if (selected.canceled || !source) return { cancelled: true };
-          }
-          chrome = await prepareClaudeChrome(source);
+        if (command.enabled) {
+          await verifyEnhancement();
+          if (!snapshot.driver.installed) await guardian.request("kernel:install");
         }
-        const next = existing
-          ? await guardian.request("status")
-          : await guardian.request("add", {
-              app: {
-                id: crypto.randomUUID(),
-                name: "Claude in Chrome",
-                path: chrome.path,
-                arguments: "",
-                enabled: false,
-              },
-            });
-        return { chrome, snapshot: next };
+        return {
+          snapshot: await guardian.request("enhance", {
+            targetId: command.id,
+            enabled: command.enabled,
+          }),
+        };
       } finally {
-        preparingChrome = false;
+        await proxyEnhancement.setNeeded(
+          Boolean(guardian.snapshot?.apps.some((app) => app.enabled && app.enhanced)) &&
+            !guardian.snapshot?.egress,
+        );
+        await release?.();
+        if (!proxyEnhancement.routeActive && !guardian.snapshot?.egress)
+          await claude.useSystemProxy();
       }
     }
-    if (command.action === "chrome:open") {
-      const snapshot = await guardian.request("status");
-      const target = snapshot.apps.find(
-        (item) => item.path.toLowerCase() === claudeChromePath().toLowerCase(),
-      );
-      if (!target) throw new Error("请先准备专用 Chrome");
-      return {
-        snapshot: await guardian.request("start", {
-          targetId: target.id,
-          browserInstall: command.install,
-        }),
-      };
+    if (command.action.startsWith("kernel:")) {
+      if (configuringKernel) throw new Error("命令进程树防护正在处理中");
+      configuringKernel = true;
+      try {
+        const snapshot = await guardian.request("status");
+        if (!snapshot.admin) throw new Error("请以管理员身份重启 IP Guard");
+        const installing = command.action === "kernel:install";
+        const rescuing = command.action === "kernel:rescue";
+        const answer = await dialog.showMessageBox({
+          type: "warning",
+          title: installing ? "安装命令防护驱动" : "命令进程树防护",
+          message: installing
+            ? "安装原版 Fort 签名驱动？"
+            : rescuing
+              ? "停止受控进程并执行独立恢复？"
+              : "加载驱动并启用命令进程树防护？",
+          detail: installing
+            ? "实验功能，实机验证尚未完成。此次仅复制文件、注册按需服务和自动恢复任务，不加载驱动。"
+            : rescuing
+              ? "受控进程树将结束，未保存内容可能丢失。恢复只清理 IP Guard 持有的驱动与规则。"
+              : "实验功能，实机验证尚未完成，曾发生全机断网。建议仅在独立测试机启用。请先保存并关闭受控程序；加载可能影响全机联网，驱动异常有蓝屏风险。HVCI 开启时拒绝加载，系统安全设置保持原样。",
+          buttons: ["取消", installing ? "安装驱动" : rescuing ? "执行恢复" : "加载并启用"],
+          defaultId: 0,
+          cancelId: 0,
+        });
+        if (answer.response !== 1) return { cancelled: true, snapshot };
+        if (rescuing) {
+          fixedEgress.setAllowed(false);
+          await new Promise<void>((resolve, reject) => {
+            const child = spawn(
+              path.join(path.dirname(nativePath()), "IpGuard.Recovery.exe"),
+              ["--repair"],
+              { windowsHide: true, stdio: ["ignore", "pipe", "pipe"] },
+            );
+            let failure = "";
+            child.stderr?.setEncoding("utf8");
+            child.stderr?.on("data", (text: string) => {
+              failure = `${failure}${text}`.slice(-4000);
+            });
+            child.on("error", reject);
+            child.on("exit", (code) =>
+              code === 0
+                ? resolve()
+                : reject(new Error(failure || "恢复未完成，请查看独立恢复日志")),
+            );
+          });
+          guardian.start();
+          return { snapshot: await guardian.request("status") };
+        }
+        return { snapshot: await guardian.request(command.action) };
+      } finally {
+        configuringKernel = false;
+      }
     }
     if (command.action === "egress:status") return { egress: fixedEgress.state };
-    if (
-      command.action === "egress:import" ||
-      command.action === "egress:enable" ||
-      command.action === "egress:disable" ||
-      command.action === "egress:retry"
-    ) {
+    if (command.action === "egress:disable" || command.action === "egress:retry") {
       if (configuringEgress) throw new Error("固定出口配置正在处理中");
       configuringEgress = true;
       try {
@@ -149,45 +206,16 @@ export const setupIpc = (
         }
         if (!snapshot.admin || snapshot.rulesLocked)
           throw new Error("请先以管理员运行并取消 IP 锁定，再配置固定出口");
-        if (command.action === "egress:import") {
-          if (snapshot.egress) throw new Error("请先关闭现有固定出口，再导入新节点");
-          const selected = await dialog.showOpenDialog({
-            title: "先在 v2rayN 选择节点，再选择其 v2rayN.exe 导入",
-            properties: ["openFile"],
-            filters: [{ name: "v2rayN", extensions: ["exe"] }],
-          });
-          const executable = selected.filePaths[0];
-          if (selected.canceled || !executable) return { cancelled: true };
-          await fixedEgress.importCurrent(executable, command.label);
-          return { egress: fixedEgress.state };
-        }
         if (command.action === "egress:disable") {
           fixedEgress.fail("正在关闭固定出口");
           let next: Snapshot;
           try {
             next = await guardian.request("egress:set", { egress: null });
           } catch (error) {
-            return await reconcileEgressFailure(null, error);
+            return await reconcileEgressFailure(error);
           }
           await fixedEgress.disable();
           return { snapshot: next, egress: fixedEgress.state };
-        }
-        if (snapshot.egress) throw new Error("固定出口已启用，请先关闭后再重新启用");
-        const known = (await claudePresets())
-          .filter((item) => item.status === "ready")
-          .map((item) => item.path.toLowerCase());
-        known.push(claudeChromePath().toLowerCase());
-        if (snapshot.apps.some((item) => item.enabled && !known.includes(item.path.toLowerCase())))
-          throw new Error(
-            "固定出口目前支持 Claude Desktop、Claude Code 与专用 Chrome，请先解除其他 EXE 的防护",
-          );
-        let policy: EgressPolicy | undefined;
-        try {
-          policy = await fixedEgress.prepare();
-          const next = await guardian.request("egress:set", { egress: policy });
-          return { snapshot: next, egress: fixedEgress.state };
-        } catch (error) {
-          return await reconcileEgressFailure(policy, error);
         }
       } finally {
         configuringEgress = false;
@@ -337,6 +365,7 @@ export const setupIpc = (
         type: "warning",
         title: "IP Guard",
         message: "解除防护后，该程序将恢复普通启动和联网。",
+        detail: "将结束对应受控进程树，未保存的内容可能丢失。",
         buttons: ["取消", "继续"],
         defaultId: 0,
         cancelId: 0,
@@ -351,7 +380,6 @@ export const setupIpc = (
       nativePayload.targetId = payload.id;
       delete nativePayload.id;
     }
-    if (action === "autostart") nativePayload.executable = process.execPath;
     try {
       return { snapshot: await guardian.request(action, nativePayload) };
     } catch (error) {

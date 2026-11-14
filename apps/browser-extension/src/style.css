@@ -30,6 +30,9 @@ body {
   background: var(--bg);
   font-size: 14px;
 }
+body[data-view="popup"] #steps {
+  display: none;
+}
 body[data-view="popup"] {
   width: 360px;
 }

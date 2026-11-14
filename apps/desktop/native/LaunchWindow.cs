@@ -141,6 +141,7 @@ namespace IpGuard {
             Post(()=>{
                 if(!notification || noticeMode!="paused") return;
                 noticeProbe=data.probe;currentIp=data.currentIp;expectedCount=data.expectedIps.Length;expectedIp=String.Join("、",data.expectedIps);
+                if(!String.IsNullOrWhiteSpace(data.detail)) reason=data.detail;
                 DescribeNotice(data);Invalidate();
             });
         }
@@ -157,6 +158,10 @@ namespace IpGuard {
                 name=data.kind=="network_restored" ? "允许的出口已恢复" : data.kind=="ip_changed" ? "检测到出口地址变化" : data.kind=="guard_offline" ? "守护连接已中断" : data.kind=="enforcement_failed" ? "连接防护发生故障" : "公网 IPv4 检测暂不可用";
                 currentIp=data.currentIp;expectedCount=data.expectedIps.Length;expectedIp=String.Join("、",data.expectedIps);phase="blocked";
                 reason=noticeMode=="restored" ? "联网已恢复，未完成的请求请重试。" : noticeMode=="stopped" ? "为保护连接，已停止受控程序。请先恢复 IP Guard 防护，再启动程序。" : data.kind=="ip_changed" ? "当前 IP 未在允许列表中，校验通过后自动恢复。" : "联网已暂停，校验通过后自动恢复。";
+                if(!String.IsNullOrWhiteSpace(data.detail)) {
+                    if(data.kind=="enforcement_failed") name="命令进程树启动已阻断";
+                    reason=data.detail;
+                }
                 steps.Clear();int count=Math.Min(data.apps.Length,6);
                 for(int i=0;i<count;i++) steps.Add(new Step {id="app-"+i,label=i==5 && data.apps.Length>6 ? "另有 "+(data.apps.Length-5)+" 个程序" : data.apps[i],status="ok",detail=noticeMode=="restored" ? "联网已恢复" : noticeMode=="paused" ? "进程保留 · 联网已暂停" : "进程树已结束",appeared=clock.Elapsed.TotalMilliseconds-200});
                 completed=clock.Elapsed.TotalMilliseconds;DescribeNotice(data);

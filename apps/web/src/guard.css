@@ -894,6 +894,93 @@ textarea::placeholder {
   display: grid;
   place-items: center;
 }
+.settings-group {
+  border-top: 1px solid var(--g-line);
+}
+.route-value {
+  margin-left: auto;
+  color: var(--g-muted);
+  font-size: 12px;
+  line-height: 1.5;
+  text-align: right;
+  overflow-wrap: anywhere;
+  min-width: 0;
+}
+.settings-advanced summary {
+  cursor: pointer;
+  list-style: none;
+}
+.settings-advanced summary::-webkit-details-marker {
+  display: none;
+}
+.settings-advanced summary:focus-visible {
+  outline: 2px solid var(--g-accent);
+  outline-offset: -4px;
+  border-radius: 8px;
+}
+.advanced-chevron {
+  flex-shrink: 0;
+  color: var(--g-muted);
+  transition: transform 180ms var(--g-ease);
+}
+.settings-advanced[open] .advanced-chevron {
+  transform: rotate(90deg);
+}
+.settings-block .rule-form {
+  display: grid;
+  grid-template-columns: 140px minmax(0, 1fr);
+  gap: 16px;
+}
+.settings-block .rule-form .form-row {
+  margin-bottom: 0;
+}
+.settings-block .rule-form .form-row:first-child,
+.settings-block .rule-form .form-error {
+  grid-column: 1 / -1;
+}
+.settings-block .rule-form .form-footer {
+  grid-column: 2;
+  grid-row: 2;
+  align-self: end;
+}
+.settings-block .setting-row label > span {
+  font-size: 12px;
+  line-height: 1.5;
+}
+.settings-block .setting-row strong > .small-status {
+  display: inline;
+  margin: 0 0 0 7px;
+  font-size: 11px;
+}
+.settings-group > .setting-row {
+  border-top: 0;
+  flex-wrap: wrap;
+}
+.settings-block .setting-info {
+  min-width: 0;
+  flex: 1 1 180px;
+}
+.settings-block .setting-row strong {
+  font-size: 14px;
+}
+.setting-detail {
+  display: block;
+  margin-top: 5px;
+  color: var(--g-muted);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+.setting-detail.warning {
+  color: var(--g-warning);
+}
+.settings-group .setting-row > .update-actions {
+  flex: 0 1 auto;
+  margin-left: auto;
+}
+.settings-group .update-state,
+.settings-group .egress-import {
+  padding-left: 55px;
+}
 .setting-row strong {
   display: block;
   font-size: 12px;
@@ -930,13 +1017,6 @@ textarea::placeholder {
   font-size: 11px;
   padding: 8px;
 }
-.footnote {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 11px;
-  color: var(--g-muted);
-}
 .guard-dialog {
   padding: 0;
   width: min(500px, calc(100vw - 40px));
@@ -947,6 +1027,14 @@ textarea::placeholder {
   box-shadow: 0 24px 80px #0003;
   margin: auto;
   animation: dialog-in 180ms var(--g-ease);
+}
+.app-enhancement {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+  font-size: 12px;
 }
 .guard-dialog::backdrop {
   background: #0c151a66;
@@ -1477,6 +1565,12 @@ textarea::placeholder {
   .rule-form {
     padding: 0 16px 18px;
   }
+  .settings-block .rule-form {
+    display: block;
+  }
+  .settings-block .rule-form .form-row {
+    margin-bottom: 19px;
+  }
   .form-footer {
     flex-direction: column;
     align-items: stretch;
@@ -1503,6 +1597,17 @@ textarea::placeholder {
   }
   .setting-row {
     padding: 18px 16px;
+  }
+  .settings-group .setting-row > .update-actions {
+    flex: 1 0 100%;
+    justify-content: flex-start;
+    margin-left: 0;
+    padding-left: 32px;
+  }
+  .settings-group .update-state,
+  .settings-group .egress-import {
+    padding-right: 16px;
+    padding-left: 16px;
   }
   .log-toolbar .btn {
     font-size: 0;

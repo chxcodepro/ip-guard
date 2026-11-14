@@ -1,11 +1,23 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { nativeVersion, claudeIpv4Endpoint } from "@ip-guard/electron";
+import {
+  nativeVersion,
+  claudeIpv4Endpoint,
+  initialCommandProtection,
+  initialStartupStatus,
+} from "@ip-guard/electron";
 import type { Snapshot } from "@ip-guard/electron";
 
 import { detectProtectionEvent } from "./protection-event.ts";
 
 const running: Snapshot = {
+  enhancementReady: false,
+  enhancementReason: "等待增强出口复核",
+  enhancementPhase: "idle",
+  driver: initialCommandProtection,
+  commandBlockId: "",
+  commandBlockReason: "",
+  commandBlockAppId: "",
   egress: null,
   online: true,
   admin: true,
@@ -21,7 +33,9 @@ const running: Snapshot = {
   reason: "",
   detection: "",
   running: ["2357f08c-f69f-4924-8fa0-8bf043019fd8"],
+  otherModelRunning: [],
   autostart: false,
+  startup: initialStartupStatus,
   rulesLocked: true,
   networkAdapters: [],
   watchedAdapter: { id: "", name: "", exists: false, up: false, ipv4: false, error: "" },
@@ -34,12 +48,54 @@ const running: Snapshot = {
       name: "Claude",
       path: "C:\\Claude\\claude.exe",
       arguments: "",
+      apiScope: "auto",
+      enhanced: false,
       enabled: true,
       pathIssue: "",
+      isClaudeCode: false,
     },
   ],
 };
 describe("network-only protection notices", () => {
+  it("reports split egress only for enhanced sessions and keeps basic programs running", () => {
+    const enhanced: Snapshot = {
+      ...running,
+      enhancementReady: true,
+      enhancementPhase: "passed",
+      apps: running.apps.map((app) => ({ ...app, enhanced: true })),
+    };
+    const blocked: Snapshot = {
+      ...enhanced,
+      enhancementReady: false,
+      enhancementPhase: "blocked",
+      enhancementReason: "国内查询出口未命中允许列表",
+    };
+    expect(detectProtectionEvent(enhanced, blocked, false)).toMatchObject({
+      kind: "ip_changed",
+      apps: ["Claude"],
+      detail: "国内查询出口未命中允许列表",
+    });
+    expect(blocked.ready).toBe(true);
+    expect(blocked.running).toEqual(enhanced.running);
+    expect(detectProtectionEvent(blocked, enhanced, false)?.kind).toBe("network_restored");
+    expect(
+      detectProtectionEvent(enhanced, { ...blocked, apps: running.apps }, false),
+    ).toBeUndefined();
+  });
+  it("reports a metadata-blocked child without claiming unrelated apps stopped", () => {
+    const blocked = {
+      ...running,
+      commandBlockId: "first",
+      commandBlockAppId: "2357f08c-f69f-4924-8fa0-8bf043019fd8",
+      commandBlockReason: "子进程缺少可核验元数据",
+    };
+    expect(detectProtectionEvent(running, blocked, false)).toMatchObject({
+      kind: "enforcement_failed",
+      apps: ["Claude"],
+      detail: "子进程缺少可核验元数据",
+    });
+    expect(detectProtectionEvent(blocked, { ...blocked }, false)).toBeUndefined();
+  });
   const paused: Snapshot = {
     ...running,
     ready: false,

@@ -14,7 +14,7 @@ let port: chrome.runtime.Port | undefined;
 let lastHeartbeat = 0;
 let reconnect: ReturnType<typeof setTimeout> | undefined;
 let queue = Promise.resolve();
-let permitted = false;
+let permitted: boolean | undefined;
 const isClaude = (value: string) => {
   try {
     const url = new URL(value);
@@ -32,7 +32,7 @@ const offline = (reason: string) => ({
   currentIp: "",
   reason,
 });
-const allowed = () => state.phase === "allowed" && Date.now() - lastHeartbeat < 3500;
+const allowed = () => state.phase === "allowed" && performance.now() - lastHeartbeat < 3500;
 async function blockTabs() {
   const tabs = await chrome.tabs.query({ url: ["*://claude.ai/*", "*://*.claude.ai/*"] });
   await Promise.all(
@@ -90,7 +90,7 @@ function publish() {
       await chrome.declarativeNetRequest
         .updateSessionRules({ removeRuleIds: [100] })
         .catch(() => undefined);
-      permitted = false;
+      permitted = undefined;
       await blockTabs();
       await chrome.storage.session.set({ state, receivedAt: Date.now() });
     });
@@ -101,7 +101,7 @@ function connect() {
   clearTimeout(reconnect);
   const next = chrome.runtime.connectNative(browserHostName);
   port = next;
-  lastHeartbeat = Date.now();
+  lastHeartbeat = performance.now();
   next.onMessage.addListener((input: unknown) => {
     if (port !== next) return;
     const result = browserStateSchema.safeParse(input);
@@ -112,7 +112,7 @@ function connect() {
       reconnect = setTimeout(connect, 3000);
     } else {
       state = result.data;
-      lastHeartbeat = Date.now();
+      lastHeartbeat = performance.now();
     }
     void publish();
   });
@@ -147,7 +147,7 @@ chrome.alarms.onAlarm.addListener(() => {
   if (!port) connect();
 });
 setInterval(() => {
-  if (port && Date.now() - lastHeartbeat > 3500) {
+  if (port && performance.now() - lastHeartbeat > 3500) {
     const previous = port;
     port = undefined;
     previous.disconnect();

@@ -46,23 +46,34 @@ import type {
 import {
   claudeIpv4Endpoint,
   formatIPText,
+  programProtectionStatus,
   isClaudeDesktopPath,
   maxAllowedIps,
+  initialCommandProtection,
+  initialStartupStatus,
   nativeVersion,
   settingsSchema,
 } from "@ip-guard/electron";
 
 import { BrowserExtensionPanel } from "#src/components/browser-extension-panel.tsx";
-import { ClaudeChromePanel } from "#src/components/claude-chrome-panel.tsx";
 import { ClaudeControl } from "#src/components/claude-control.tsx";
 import { CoffeePage } from "#src/components/coffee-page.tsx";
+import { CommandProtectionPanel } from "#src/components/command-protection-panel.tsx";
 import { EditAppDialog } from "#src/components/edit-app-dialog.tsx";
 import { FixedEgressPanel } from "#src/components/fixed-egress-panel.tsx";
+import { ProxyEnhancementPanel } from "#src/components/proxy-enhancement-panel.tsx";
 import { UpdatePanel } from "#src/components/update-panel.tsx";
 
 import "#src/guard.css";
 
 const initial: Snapshot = {
+  enhancementReady: false,
+  enhancementReason: "等待增强出口复核",
+  enhancementPhase: "idle",
+  driver: initialCommandProtection,
+  commandBlockId: "",
+  commandBlockReason: "",
+  commandBlockAppId: "",
   egress: null,
   online: false,
   admin: false,
@@ -78,7 +89,9 @@ const initial: Snapshot = {
   reason: "",
   detection: "",
   running: [],
+  otherModelRunning: [],
   autostart: false,
+  startup: initialStartupStatus,
   networkAdapters: [],
   watchedAdapter: {
     id: "",
@@ -261,10 +274,6 @@ function RuleForm({
         </div>
       </div>
       <div className="form-row">
-        <label htmlFor="ip-source">IPv4 来源 · Claude AI 出口</label>
-        <input id="ip-source" spellCheck={false} readOnly value={claudeIpv4Endpoint} />
-      </div>
-      <div className="form-row">
         <label htmlFor="interval">检测间隔</label>
         <div className="input-unit">
           <input
@@ -389,7 +398,15 @@ function AddDialog({
         onSubmit={(event) => {
           event.preventDefault();
           if (!canAdd || busy || duplicate) return;
-          void onAdd({ id: crypto.randomUUID(), name, path, arguments: args, enabled: false });
+          void onAdd({
+            id: crypto.randomUUID(),
+            name,
+            path,
+            arguments: args,
+            apiScope: "auto",
+            enhanced: false,
+            enabled: false,
+          });
         }}
       >
         <header>
@@ -522,7 +539,8 @@ export function GuardApp() {
   const [loading, setLoading] = useState(Boolean(window.desktop));
   const [failure, setFailure] = useState("");
   const [adding, setAdding] = useState(false);
-  const [editing, setEditing] = useState<ProtectedApp | null>(null);
+  const [strictSetupOpen, setStrictSetupOpen] = useState(false);
+  const [editing, setEditing] = useState<Snapshot["apps"][number] | null>(null);
   const [filter, setFilter] = useState("");
   const [ipv6, setIpv6] = useState<CoffeeMetric>();
   const bridge = window.desktop;
@@ -583,7 +601,7 @@ export function GuardApp() {
       unsubscribe();
     };
   }, [bridge]);
-  const invoke = async (command: Command) => {
+  const invoke = async (command: Command, onFailure?: (message: string) => void) => {
     if (!bridge) {
       toast.error("请在 Windows 桌面版中执行此操作");
       return undefined;
@@ -597,7 +615,9 @@ export function GuardApp() {
       }
       return reply;
     } catch (error) {
-      toast.error(formatIPText(errorText(error, "操作失败")));
+      const message = formatIPText(errorText(error, "操作失败"));
+      if (onFailure) onFailure(message);
+      else toast.error(message);
       return undefined;
     } finally {
       setBusy(false);
@@ -607,6 +627,8 @@ export function GuardApp() {
   const offline = Boolean(bridge && !loading && (!snapshot.online || failure));
   const available = Boolean(bridge && snapshot.online && snapshot.admin && !failure);
   const enabledCount = snapshot.apps.filter((a) => a.enabled && !a.pathIssue).length;
+  const startupEnabled =
+    snapshot.startup.state === "unknown" ? snapshot.autostart : snapshot.startup.enabled;
   const status = loading
     ? "连接守护程序"
     : offline
@@ -619,7 +641,9 @@ export function GuardApp() {
             ? "IPv4 匹配"
             : snapshot.running.length
               ? "网络已暂停"
-              : "已阻断";
+              : snapshot.otherModelRunning.length
+                ? "受保护会话已阻断"
+                : "已阻断";
   const lock = async (settings: Settings) => {
     const result = await invoke({ action: "lock", settings });
     if (result?.snapshot) {
@@ -658,26 +682,21 @@ export function GuardApp() {
             受保护程序 <span className="count">{snapshot.apps.length}</span>
           </h2>
         </div>
-        {page === "overview" ? (
-          <button className="text-btn" onClick={() => setPage("apps")}>
-            管理程序
-            <ChevronRight size={15} />
-          </button>
-        ) : (
-          addAction
-        )}
+        {addAction}
       </div>
       {snapshot.apps.length === 0 ? (
-        <Empty
-          icon={<Shield size={26} />}
-          title="还没有添加程序"
-          action={page === "overview" ? addAction : undefined}
-        />
+        <Empty icon={<Shield size={26} />} title="还没有添加程序" />
       ) : (
         <div className="app-list">
           {snapshot.apps.map((target) => {
-            const running = snapshot.running.includes(target.id);
-            const networkPaused = running && !snapshot.ready;
+            const protectedRunning = snapshot.running.includes(target.id);
+            const otherRunning = snapshot.otherModelRunning.includes(target.id);
+            const running = protectedRunning || otherRunning;
+            const networkPaused =
+              protectedRunning &&
+              (!snapshot.ready || (target.enhanced && !snapshot.enhancementReady));
+            const canUseOtherModel =
+              target.isClaudeCode && target.apiScope !== "claude" && !target.enhanced;
             const actionReason = !bridge
               ? "请在 Windows 桌面版操作"
               : loading
@@ -688,11 +707,13 @@ export function GuardApp() {
                     ? "请以管理员身份重启"
                     : !running && target.pathIssue
                       ? target.pathIssue
-                      : !running && !locked
+                      : !running && !locked && !canUseOtherModel
                         ? "先锁定允许的公网 IPv4"
                         : !running && !target.enabled
-                          ? "先开启右侧防护开关"
-                          : "";
+                          ? "先开启程序防护"
+                          : !running && target.enhanced && !snapshot.enhancementReady
+                            ? snapshot.enhancementReason
+                            : "";
             return (
               <article className="app-row" key={target.id}>
                 <div className={`app-glyph ${running ? "running" : ""}`}>
@@ -704,21 +725,54 @@ export function GuardApp() {
                     <span
                       className={`small-status ${target.pathIssue || networkPaused ? "warning" : running ? "good" : ""}`}
                     >
-                      {running
-                        ? networkPaused
-                          ? "运行中 · 网络已暂停"
-                          : "运行中"
-                        : target.pathIssue
-                          ? "路径待更新"
-                          : target.enabled
-                            ? locked
-                              ? "待启动"
-                              : "待锁定"
-                            : "未启用"}
+                      {otherRunning && !protectedRunning
+                        ? "IP 防护关闭 · 运行中"
+                        : running
+                          ? networkPaused
+                            ? "运行中 · 网络已暂停"
+                            : "运行中"
+                          : target.pathIssue
+                            ? "路径待更新"
+                            : target.enabled
+                              ? locked
+                                ? "待启动"
+                                : "待锁定"
+                              : "未启用"}
                     </span>
                   </h3>
                   <div title={target.path} className="app-path mono">
                     {target.path}
+                  </div>
+                  {running && (
+                    <div className="app-action-reason" role="status">
+                      {programProtectionStatus(snapshot, target)}
+                    </div>
+                  )}
+                  <div className="app-enhancement">
+                    <Toggle
+                      checked={target.enhanced}
+                      label={`${target.name} 本机 IP 防泄露增强`}
+                      disabled={
+                        busy || !available || (!target.enhanced && (!target.enabled || !locked))
+                      }
+                      onChange={() =>
+                        void invoke({ action: "enhance", id: target.id, enabled: !target.enhanced })
+                      }
+                    />
+                    <span>
+                      本机 IP 防泄露 <span className="muted">可选增强</span>
+                    </span>
+                    {target.enhanced && (
+                      <span
+                        className={`small-status ${snapshot.driver.ready ? "good" : "warning"}`}
+                      >
+                        {snapshot.driver.ready
+                          ? snapshot.enhancementReady
+                            ? "检测出口已通过"
+                            : snapshot.enhancementReason
+                          : "未生效，请检查过滤器"}
+                      </span>
+                    )}
                   </div>
                   {(target.pathIssue || actionReason) && (
                     <div
@@ -746,7 +800,8 @@ export function GuardApp() {
                     disabled={
                       busy ||
                       !available ||
-                      (!target.enabled && (!locked || Boolean(target.pathIssue)))
+                      (!target.enabled &&
+                        ((!locked && !canUseOtherModel) || Boolean(target.pathIssue)))
                     }
                     onChange={() =>
                       void invoke({ action: "protect", id: target.id, enabled: !target.enabled })
@@ -1046,7 +1101,6 @@ export function GuardApp() {
                     />
                   </section>
                 )}
-                {appList}
                 <section className="panel events-panel">
                   <div className="panel-heading">
                     <h2>最近事件</h2>
@@ -1072,18 +1126,16 @@ export function GuardApp() {
                   </div>
                 )}
                 {appList}
-                <div className="footnote">
-                  <Shield size={14} />
-                  启用后，双击 EXE 和原快捷方式均先经过 IPv4 校验。
-                </div>
               </>
             )}
             {page === "settings" && (
               <>
-                <section className="panel">
+                <section
+                  className="panel settings-block"
+                  aria-labelledby="connection-settings-title"
+                >
                   <div className="panel-heading">
-                    <h2>网络规则</h2>
-                    <span className="subtle-label">公网 IPv4</span>
+                    <h2 id="connection-settings-title">连接与防护</h2>
                   </div>
                   <RuleForm
                     ipsVisible={ipsVisible}
@@ -1095,18 +1147,12 @@ export function GuardApp() {
                     onUnlock={unlock}
                     onFetch={fetchIPv4}
                   />
-                </section>
-                <section className="panel settings-panel">
-                  <div className="panel-heading">
-                    <h2>网卡检测</h2>
-                    <span className="subtle-label">仅检测</span>
-                  </div>
                   <div className="setting-row">
                     <span className="setting-icon">
                       <Network size={19} />
                     </span>
                     <label htmlFor="watched-adapter">
-                      <strong>监控网卡</strong>
+                      <strong>网卡检测</strong>
                       <span title={snapshot.watchedAdapter.error}>
                         {!snapshot.online
                           ? "等待守护连接"
@@ -1135,39 +1181,56 @@ export function GuardApp() {
                       ))}
                     </select>
                   </div>
+                  <BrowserExtensionPanel
+                    busy={busy}
+                    available={available}
+                    onSetup={async () => Boolean(await invoke({ action: "extension:setup" }))}
+                  />
+                  <ProxyEnhancementPanel busy={busy} onAction={invoke} ipsVisible={ipsVisible} />
+                  <details
+                    className="settings-group settings-advanced"
+                    open={strictSetupOpen}
+                    onToggle={(event) => setStrictSetupOpen(event.currentTarget.open)}
+                  >
+                    <summary className="setting-row">
+                      <span className="setting-icon">
+                        <ShieldCheck size={19} />
+                      </span>
+                      <strong>
+                        严格命令防护 <span className="small-status warning">实验</span>
+                      </strong>
+                      <span className="route-value">
+                        {[
+                          snapshot.egress && "专用出口已启用",
+                          snapshot.driver.enabled && "命令过滤已开启",
+                        ]
+                          .filter(Boolean)
+                          .join(" · ") || "未启用"}
+                      </span>
+                      <ChevronRight size={15} className="advanced-chevron" />
+                    </summary>
+                    <CommandProtectionPanel
+                      snapshot={snapshot}
+                      busy={busy}
+                      available={available}
+                      onAction={invoke}
+                    />
+                    {snapshot.egress && (
+                      <FixedEgressPanel
+                        snapshot={snapshot}
+                        busy={busy}
+                        available={available}
+                        onAction={invoke}
+                      />
+                    )}
+                  </details>
                 </section>
-                <FixedEgressPanel
-                  snapshot={snapshot}
-                  busy={busy}
-                  available={available}
-                  onAction={invoke}
-                />
-                <ClaudeChromePanel
-                  snapshot={snapshot}
-                  busy={busy}
-                  available={available}
-                  onAction={invoke}
-                />
-                <BrowserExtensionPanel
-                  busy={busy}
-                  available={available}
-                  onSetup={async () => Boolean(await invoke({ action: "extension:setup" }))}
-                />
-                <UpdatePanel />
-                <section className="panel settings-panel">
+                <section
+                  className="panel settings-block"
+                  aria-labelledby="application-settings-title"
+                >
                   <div className="panel-heading">
-                    <h2>后台与启动</h2>
-                  </div>
-                  <div className="setting-row">
-                    <span className="setting-icon">
-                      <ShieldCheck size={19} />
-                    </span>
-                    <label>
-                      <strong>原生守护组件</strong>
-                    </label>
-                    <span className="fixed-value mono">
-                      {snapshot.online ? snapshot.nativeVersion : "未连接"}
-                    </span>
+                    <h2 id="application-settings-title">应用</h2>
                   </div>
                   <div className="setting-row">
                     <span className="setting-icon">
@@ -1175,53 +1238,29 @@ export function GuardApp() {
                     </span>
                     <label id="autostart-label">
                       <strong>开机启动</strong>
-                      <span>登录 Windows 后启动，直接进入托盘</span>
+                      <span role="status">{snapshot.startup.message}</span>
                     </label>
+                    {snapshot.startup.state === "error" && snapshot.autostart && (
+                      <button
+                        type="button"
+                        className="btn"
+                        disabled={busy || !available}
+                        onClick={() => void invoke({ action: "autostart", enabled: true })}
+                      >
+                        <RefreshCw size={14} />
+                        重新设置
+                      </button>
+                    )}
                     <Toggle
-                      checked={snapshot.autostart}
+                      checked={startupEnabled}
                       label="开机启动"
                       disabled={busy || !available}
                       onChange={() =>
-                        void invoke({ action: "autostart", enabled: !snapshot.autostart })
+                        void invoke({ action: "autostart", enabled: !startupEnabled })
                       }
                     />
                   </div>
-                  <div className="setting-row">
-                    <span className="setting-icon">
-                      <Monitor size={19} />
-                    </span>
-                    <div>
-                      <strong>关闭窗口后留在托盘</strong>
-                    </div>
-                    <span className="fixed-value">
-                      <Check size={14} />
-                      已启用
-                    </span>
-                  </div>
-                  <div className="setting-row">
-                    <span className="setting-icon">
-                      <ShieldOff size={19} />
-                    </span>
-                    <div>
-                      <strong>IP 异常时暂停联网，保留程序</strong>
-                    </div>
-                    <span className="fixed-value">
-                      <Check size={14} />
-                      已启用
-                    </span>
-                  </div>
-                </section>
-                <section className="panel settings-panel">
-                  <div className="panel-heading">
-                    <h2>外观</h2>
-                  </div>
-                  <div className="setting-row">
-                    <span className="setting-icon">
-                      <Sun size={19} />
-                    </span>
-                    <strong>界面主题</strong>
-                    <ThemeControl />
-                  </div>
+                  <UpdatePanel />
                 </section>
               </>
             )}
@@ -1261,7 +1300,7 @@ export function GuardApp() {
             </span>
             <span>
               {enabledCount} 个程序已接管<span className="footer-separator">/</span>
-              {snapshot.running.length} 个运行中
+              {new Set([...snapshot.running, ...snapshot.otherModelRunning]).size} 个运行中
             </span>
           </footer>
         </main>

@@ -69,24 +69,17 @@ export function BrowserExtensionPanel({
   }, [bridge, revision]);
   const updateAvailable = status.outdatedBrowsers.length > 0 || status.outdatedConnections > 0;
   return (
-    <section className="panel settings-panel">
-      <div className="panel-heading">
-        <h2>浏览器防护</h2>
-        <span
-          className={`small-status ${updateAvailable ? "warning" : status.phase === "running" ? "good" : ""}`}
-          role="status"
-        >
-          {labels[status.phase]}
-          {updateAvailable ? " · 插件待更新" : ""}
-        </span>
-      </div>
+    <div className="browser-web-panel">
       <div className="setting-row">
         <span className="setting-icon">
           <ShieldCheck size={19} />
         </span>
-        <div>
-          <strong>IP Guard 网页扩展</strong>
-          <span>
+        <div className="setting-info">
+          <strong>Claude 网页防护</strong>
+          <span className="setting-detail" role="status">
+            {labels[status.phase]}
+            {updateAvailable ? " · 插件待更新" : ""}
+            {" · "}
             {status.phase === "running"
               ? `${status.connections} 个浏览器连接`
               : status.phase === "installed"
@@ -166,6 +159,6 @@ export function BrowserExtensionPanel({
           </ol>
         </div>
       )}
-    </section>
+    </div>
   );
 }

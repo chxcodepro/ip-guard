@@ -1,4 +1,4 @@
-import { Cable, FolderInput, LoaderCircle, Power, RotateCw } from "lucide-react";
+import { Cable, Power, RotateCw } from "lucide-react";
 import { useEffect, useState } from "react";
 
 import type { Command, EgressState, Reply, Snapshot } from "@ip-guard/electron";
@@ -16,7 +16,6 @@ export function FixedEgressPanel({
 }) {
   const bridge = window.desktop;
   const [state, setState] = useState<EgressState>({ profile: null, phase: "disabled", error: "" });
-  const [label, setLabel] = useState("我的固定节点");
   const [failure, setFailure] = useState("");
   useEffect(() => {
     if (!bridge) return;
@@ -50,7 +49,7 @@ export function FixedEgressPanel({
   };
   const enabled = Boolean(snapshot.egress);
   const waiting = busy || state.phase === "starting";
-  const editable = available && !snapshot.rulesLocked && !waiting;
+  const editable = available && !snapshot.rulesLocked && !waiting && !snapshot.driver.enabled;
   const status =
     failure ||
     state.error ||
@@ -68,85 +67,52 @@ export function FixedEgressPanel({
               : "节点已固定 · 待锁定 IP"
             : state.profile
               ? "节点已导入 · 待启用"
-              : "未配置");
+              : "跟随当前网络");
   return (
-    <section
-      className="panel settings-panel fixed-egress-panel"
+    <div
+      className="settings-group fixed-egress-panel"
+      role="group"
       aria-labelledby="fixed-egress-title"
     >
-      <div className="panel-heading">
-        <h2 id="fixed-egress-title">Claude 固定出口</h2>
-        <span className={`small-status ${enabled && snapshot.ready ? "good" : ""}`}>
-          {enabled ? "已启用" : "未启用"}
-        </span>
-      </div>
       <div className="setting-row">
         <span className="setting-icon">
           <Cable size={19} />
         </span>
-        <div>
-          <strong>{snapshot.egress?.label ?? state.profile?.label ?? "独立节点"}</strong>
+        <div className="setting-info">
+          <strong id="fixed-egress-title">历史独立出口</strong>
+          {(snapshot.egress?.label || state.profile?.label) && (
+            <span className="setting-detail">{snapshot.egress?.label ?? state.profile?.label}</span>
+          )}
         </div>
+        <span className={`small-status ${enabled && snapshot.ready ? "good" : ""}`}>
+          {enabled ? "已启用" : "未启用"}
+        </span>
         <div className="update-actions">
-          {enabled ? (
-            <>
-              {state.phase === "failed" && (
-                <button
-                  type="button"
-                  className="btn"
-                  disabled={!available || waiting}
-                  onClick={() => void perform({ action: "egress:retry" })}
-                >
-                  <RotateCw size={14} />
-                  重启通道
-                </button>
-              )}
+          <>
+            {state.phase === "failed" && (
               <button
                 type="button"
                 className="btn"
-                disabled={!editable}
-                onClick={() => void perform({ action: "egress:disable" })}
+                disabled={!available || waiting}
+                onClick={() => void perform({ action: "egress:retry" })}
               >
-                <Power size={14} />
-                关闭固定出口
+                <RotateCw size={14} />
+                重启通道
               </button>
-            </>
-          ) : (
-            <button
-              type="button"
-              className="btn primary"
-              disabled={!editable || !state.profile}
-              onClick={() => void perform({ action: "egress:enable" })}
-            >
-              {waiting ? <LoaderCircle size={14} className="spin" /> : <Power size={14} />}
-              启用固定出口
-            </button>
-          )}
-        </div>
-      </div>
-      {!enabled && (
-        <div className="egress-import">
-          <label htmlFor="fixed-node-label">节点名称</label>
-          <div className="egress-import-controls">
-            <input
-              id="fixed-node-label"
-              value={label}
-              onChange={(event) => setLabel(event.target.value)}
-              maxLength={100}
-              disabled={!editable}
-            />
+            )}
             <button
               type="button"
               className="btn"
-              disabled={!editable || !label.trim()}
-              onClick={() => void perform({ action: "egress:import", label: label.trim() })}
+              disabled={!editable}
+              title={!editable ? "先关闭命令进程树保护并取消 IP 锁定，再切换联网方式" : undefined}
+              onClick={() => void perform({ action: "egress:disable" })}
             >
-              <FolderInput size={14} />
-              导入 v2rayN 当前节点
+              <Power size={14} />
+              改为跟随当前网络
             </button>
-          </div>
+          </>
         </div>
-      )}
+      </div>
       <div
         className={`update-state ${failure || state.error ? "error" : ""}`}
         role="status"
@@ -154,6 +120,6 @@ export function FixedEgressPanel({
       >
         {status}
       </div>
-    </section>
+    </div>
   );
 }

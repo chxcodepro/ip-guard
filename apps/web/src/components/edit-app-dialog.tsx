@@ -1,8 +1,7 @@
 import { LoaderCircle, Save, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
-import type { ProtectedApp } from "@ip-guard/electron";
-import { isClaudeChromePath } from "@ip-guard/electron";
+import type { ProtectedApp, Snapshot } from "@ip-guard/electron";
 
 export function EditAppDialog({
   app,
@@ -11,7 +10,7 @@ export function EditAppDialog({
   onClose,
   onSave,
 }: {
-  app: ProtectedApp;
+  app: Snapshot["apps"][number];
   busy: boolean;
   available: boolean;
   onClose: () => void;
@@ -19,14 +18,12 @@ export function EditAppDialog({
 }) {
   const dialog = useRef<HTMLDialogElement>(null);
   const argsInput = useRef<HTMLInputElement>(null);
-  const nameInput = useRef<HTMLInputElement>(null);
-  const managedChrome = isClaudeChromePath(app.path);
   const [name, setName] = useState(app.name);
   const [args, setArgs] = useState(app.arguments);
   useEffect(() => {
     const element = dialog.current;
     element?.showModal();
-    (managedChrome ? nameInput : argsInput).current?.focus();
+    argsInput.current?.focus();
     return () => element?.close();
   }, []);
   return (
@@ -69,7 +66,6 @@ export function EditAppDialog({
             <label htmlFor="edit-app-name">显示名称</label>
             <input
               id="edit-app-name"
-              ref={nameInput}
               value={name}
               onChange={(event) => setName(event.target.value)}
               maxLength={100}
@@ -77,21 +73,19 @@ export function EditAppDialog({
               disabled={busy}
             />
           </div>
-          {!managedChrome && (
-            <div className="form-row">
-              <label htmlFor="edit-app-args">
-                启动参数 <span className="muted">下次从 IP Guard 启动时生效</span>
-              </label>
-              <input
-                ref={argsInput}
-                id="edit-app-args"
-                value={args}
-                onChange={(event) => setArgs(event.target.value)}
-                maxLength={4096}
-                disabled={busy}
-              />
-            </div>
-          )}
+          <div className="form-row">
+            <label htmlFor="edit-app-args">
+              启动参数 <span className="muted">下次从 IP Guard 启动时生效</span>
+            </label>
+            <input
+              ref={argsInput}
+              id="edit-app-args"
+              value={args}
+              onChange={(event) => setArgs(event.target.value)}
+              maxLength={4096}
+              disabled={busy}
+            />
+          </div>
         </div>
         <footer>
           <button type="button" className="btn" onClick={onClose} disabled={busy}>

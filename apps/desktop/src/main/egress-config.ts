@@ -28,15 +28,12 @@ const singProtocols = new Set([
 ]);
 export type NodeSnapshot = { engine: "xray" | "sing-box"; outbound: Record<string, unknown> };
 
-function serverDomains(value: unknown): string[] {
-  if (Array.isArray(value)) return value.flatMap(serverDomains);
+export function nodeServers(value: unknown): string[] {
+  if (Array.isArray(value)) return value.flatMap(nodeServers);
   if (!value || typeof value !== "object") return [];
   return Object.entries(value).flatMap(([key, item]) => {
-    if ((key === "address" || key === "server") && typeof item === "string" && !isIP(item)) {
-      const domain = domainToASCII(item);
-      return domain ? [domain] : [];
-    }
-    return serverDomains(item);
+    if ((key === "address" || key === "server") && typeof item === "string") return [item];
+    return nodeServers(item);
   });
 }
 
@@ -105,7 +102,14 @@ export function coreConfiguration(node: NodeSnapshot, port: number): Record<stri
   if (node.engine === "xray") {
     const stream = record.parse(node.outbound.streamSettings ?? {});
     const sockopt = record.parse(stream.sockopt ?? {});
-    const bootstrap = [...new Set(serverDomains(node.outbound.settings))];
+    const bootstrap = [
+      ...new Set(
+        nodeServers(node.outbound.settings)
+          .filter((value) => !isIP(value))
+          .map(domainToASCII)
+          .filter(Boolean),
+      ),
+    ];
     return {
       log: { loglevel: "none" },
       dns: {
@@ -134,7 +138,12 @@ export function coreConfiguration(node: NodeSnapshot, port: number): Record<stri
         },
         { tag: "blocked", protocol: "blackhole", settings: {} },
       ],
-      routing: { rules: [{ type: "field", ip: ["::/0"], outboundTag: "blocked" }] },
+      routing: {
+        rules: [
+          { type: "field", ip: ["::/0"], outboundTag: "blocked" },
+          { type: "field", inboundTag: ["guard-http"], outboundTag: "fixed" },
+        ],
+      },
     };
   }
   const remote = z.string().min(1).parse(node.outbound.server);

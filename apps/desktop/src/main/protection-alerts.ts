@@ -30,6 +30,21 @@ export class ProtectionAlerts {
       else {
         const viewer = this.viewer;
         if (
+          viewer &&
+          viewer.notice.probe.round === 0 &&
+          ["ip_changed", "ip_unavailable"].includes(viewer.notice.kind) &&
+          current.online &&
+          current.ready &&
+          !current.enhancementReady &&
+          current.apps.some((app) => app.enhanced && current.running.includes(app.id))
+        ) {
+          if (viewer.notice.detail !== current.enhancementReason) {
+            viewer.notice = { ...viewer.notice, detail: current.enhancementReason };
+            this.writeNotice(true);
+          }
+          return;
+        }
+        if (
           !viewer ||
           viewer.child.exitCode !== null ||
           !viewer.child.stdin?.writable ||
@@ -112,7 +127,9 @@ export class ProtectionAlerts {
             : ["guard_offline", "enforcement_failed"].includes(notice.kind)
               ? "受保护程序已停止"
               : "已暂停联网，程序保持运行",
-        detail: `${notice.apps.join("、")}\n${notice.probe.round ? `第 ${notice.probe.round} 轮 · ${notice.probe.attempt}/${ipv4Attempts} 次\n` : ""}${notice.kind === "network_restored" ? "IPv4 已命中允许列表。未完成的请求请重新发送。" : ["guard_offline", "enforcement_failed"].includes(notice.kind) ? "请先恢复 IP Guard 防护，再手动重新启动程序。" : "恢复允许的网络后自动恢复联网。"}`,
+        detail: notice.detail
+          ? `${notice.apps.join("、")}\n${notice.detail}`
+          : `${notice.apps.join("、")}\n${notice.probe.round ? `第 ${notice.probe.round} 轮 · ${notice.probe.attempt}/${ipv4Attempts} 次\n` : ""}${notice.kind === "network_restored" ? "IPv4 已命中允许列表。未完成的请求请重新发送。" : ["guard_offline", "enforcement_failed"].includes(notice.kind) ? "请先恢复 IP Guard 防护，再手动重新启动程序。" : "恢复允许的网络后自动恢复联网。"}`,
         buttons: ["知道了", "打开 IP Guard"],
         defaultId: 0,
         cancelId: 0,

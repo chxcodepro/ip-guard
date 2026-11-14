@@ -4,7 +4,6 @@ import path from "node:path";
 
 import {
   browserExtensionId,
-  claudeChromeStoreUrl,
   claudeDesktopFamilies,
   claudeIpv4Endpoint,
   ipv4Attempts,
@@ -32,7 +31,6 @@ namespace IpGuard { public static class BuildInfo {
  public const string ExtensionId = ${JSON.stringify(browserExtensionId)};
  public const int Protocol = ${nativeProtocol};
  public const string Endpoint = ${JSON.stringify(claudeIpv4Endpoint)};
- public const string ClaudeChromeStoreUrl = ${JSON.stringify(claudeChromeStoreUrl)};
  public const int ProbeTimeoutMs = ${ipv4ProbeTimeoutMs};
  public const int ProbeAttempts = ${ipv4Attempts};
  public const int MaxAllowedIps = ${maxAllowedIps};
@@ -51,12 +49,13 @@ const compiler = path.join(
   process.env.WINDIR ?? "C:\\Windows",
   "Microsoft.NET/Framework64/v4.0.30319/csc.exe",
 );
-const sources = readdirSync(path.join(root, "native"))
-  .filter((file) => file.endsWith(".cs"))
-  .map((file) => path.join(root, "native", file));
+const sources = readdirSync(path.join(root, "native"), { recursive: true, withFileTypes: true })
+  .filter((file) => file.isFile() && file.name.endsWith(".cs"))
+  .map((file) => path.join(file.parentPath, file.name));
 for (const entry of [
   { target: "winexe", main: "Program", file: "IpGuard.Native.exe" },
   { target: "exe", main: "TerminalProgram", file: "IpGuard.Terminal.exe" },
+  { target: "exe", main: "ProcessNetwork.RecoveryProgram", file: "IpGuard.Recovery.exe" },
 ]) {
   const result = spawnSync(
     compiler,
@@ -71,6 +70,7 @@ for (const entry of [
       "/reference:Microsoft.CSharp.dll",
       "/reference:System.Windows.Forms.dll",
       "/reference:System.Drawing.dll",
+      "/reference:System.Management.dll",
       `/out:${path.join(output, entry.file)}`,
       buildInfo,
       ...sources,

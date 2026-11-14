@@ -27,7 +27,7 @@ namespace IpGuard {
                 }
                 if(args.Length==2 && args[0]=="restore-startup") {
                     SystemPolicy.RequireAdmin(); Config saved=Data.Load();
-                    if(saved.autostart) SystemPolicy.Autostart(true,args[1]); return 0;
+                    if(saved.autostart) StartupPolicy.Configure(true,args[1]); return 0;
                 }
                 bool own;
                 using(Mutex mutex=new Mutex(true,"Global\\"+SystemPolicy.Owner,out own)) {
@@ -38,7 +38,14 @@ namespace IpGuard {
                     string line=Console.ReadLine();
                     var initialize=line==null ? null : Data.Json().Deserialize<System.Collections.Generic.Dictionary<string,object>>(line);
                     if(initialize==null || initialize["action"] as string!="initialize" || initialize["version"] as string!=BuildInfo.Version || Convert.ToInt32(initialize["protocol"])!=BuildInfo.Protocol) throw new Exception("界面与原生组件版本不匹配，请完整升级后启动。");
-                    new Guard().Run();
+                    string desktopExe=initialize.ContainsKey("executable") ? initialize["executable"] as string : null;
+                    if(String.IsNullOrEmpty(desktopExe) || !Path.IsPathRooted(desktopExe)) throw new Exception("桌面启动路径缺失，请完整升级后启动。");
+                    EgressPolicy enhancementPolicy=null;
+                    if(initialize.ContainsKey("enhancementPolicy") && initialize["enhancementPolicy"]!=null) {
+                        enhancementPolicy=Data.Json().Deserialize<EgressPolicy>(Data.Json().Serialize(initialize["enhancementPolicy"]));
+                        enhancementPolicy.Validate();
+                    }
+                    new Guard(Path.GetFullPath(desktopExe),enhancementPolicy).Run();
                 }
                 return 0;
             } catch(Exception e) {

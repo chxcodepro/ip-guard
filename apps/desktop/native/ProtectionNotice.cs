@@ -7,6 +7,7 @@ using System.Windows.Forms;
 namespace IpGuard {
     public sealed class ProtectionNotice {
         public string kind,currentIp;
+        public string detail;
         public string[] apps,expectedIps;
         public ProbeState probe;
         public bool updateOnly;
@@ -16,6 +17,7 @@ namespace IpGuard {
             if(data==null || !new[]{"ip_changed","ip_unavailable","network_restored","guard_offline","enforcement_failed"}.Contains(data.kind) || data.apps==null || data.apps.Length==0 || data.apps.Length>30 || data.apps.Any(name=>String.IsNullOrWhiteSpace(name) || name.Length>100)) throw new InvalidDataException("防护提醒格式无效");
             if(data.currentIp==null || data.expectedIps==null || data.expectedIps.Length>BuildInfo.MaxAllowedIps || (data.currentIp!="" && !Data.PublicV4(data.currentIp)) || data.expectedIps.Any(ip=>!Data.PublicV4(ip))) throw new InvalidDataException("防护提醒地址无效");
             if(data.probe==null || data.probe.round<0 || data.probe.attempt<0 || data.probe.attempt>BuildInfo.ProbeAttempts || !new[]{"idle","checking","passed","failed"}.Contains(data.probe.phase)) throw new InvalidDataException("防护提醒检测次数无效");
+            if(data.detail!=null && data.detail.Length>2000) throw new InvalidDataException("防护提醒原因过长");
             return data;
         }
         public static int Run() {

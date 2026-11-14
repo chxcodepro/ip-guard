@@ -40,12 +40,10 @@ export class BrowserBridge {
   }
   private state(): BrowserState {
     const value = this.guardian.snapshot;
-    const separate = Boolean(value?.egress);
-    const currentIp = separate ? (this.systemProbe?.latest?.ip ?? "") : (value?.currentIp ?? "");
-    const checkedAt = separate
-      ? (this.systemProbe?.latest?.checkedAt ?? "")
-      : (value?.lastChecked ?? "");
-    const checking = separate ? this.systemChecking : (value?.checking ?? false);
+    // EXE enhancement can use a separate route; web authorization follows the unmodified system route.
+    const currentIp = this.systemProbe?.latest?.ip ?? "";
+    const checkedAt = this.systemProbe?.latest?.checkedAt ?? "";
+    const checking = this.systemChecking;
     const base: BrowserState = {
       protocol: 1,
       appVersion: nativeVersion,
@@ -61,7 +59,6 @@ export class BrowserBridge {
       return { ...base, phase: "unlocked", reason: "请在 IP Guard 中锁定允许的 IPv4" };
     const age = Date.now() - Date.parse(checkedAt);
     if (
-      (separate || value.ready) &&
       value.settings.expectedIps.includes(currentIp) &&
       currentIp &&
       Number.isFinite(age) &&
@@ -77,10 +74,9 @@ export class BrowserBridge {
     return {
       ...base,
       phase: checking && !currentIp ? "checking" : "blocked",
-      reason: separate
-        ? this.systemProbe?.latest?.error ||
-          (currentIp ? "浏览器出口 IPv4 未命中允许列表" : "等待浏览器出口 IPv4 校验")
-        : value.reason || "等待新的 IPv4 校验结果",
+      reason:
+        this.systemProbe?.latest?.error ||
+        (currentIp ? "网页出口 IPv4 未命中允许列表" : "等待网页出口 IPv4 校验"),
     };
   }
   private listen(sid: string) {
@@ -139,7 +135,6 @@ export class BrowserBridge {
     if (
       snapshot?.online &&
       !this.guardian.error &&
-      snapshot.egress &&
       snapshot.rulesLocked &&
       this.clients.size &&
       !this.systemChecking

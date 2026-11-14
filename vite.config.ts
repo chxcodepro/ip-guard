@@ -46,7 +46,11 @@ export default defineConfig({
     projects: [
       {
         test: {
-          include: ["apps/desktop/src/**/*.test.ts", "packages/*/src/**/*.test.ts"],
+          include: [
+            "apps/desktop/src/**/*.test.ts",
+            "apps/browser-extension/src/**/*.test.ts",
+            "packages/*/src/**/*.test.ts",
+          ],
           name: "unit",
         },
       },

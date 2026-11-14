@@ -14,6 +14,7 @@ namespace IpGuard {
     }
     public static class SystemPolicy {
         public static int FixedProxyPort;
+        public static int EnhancedProxyPort;
         public static readonly string Sid = WindowsIdentity.GetCurrent().User.Value;
         public static readonly string Owner = "IPGuard." + Sid;
         public static readonly string PipeName = "IPGuard-" + Sid;
@@ -24,7 +25,6 @@ namespace IpGuard {
         static RegistryView[] Views { get { return new[] { RegistryView.Registry64, RegistryView.Registry32 }; } }
         public static void Intercept(Target app) {
             RequireAdmin(); Data.Validate(app, true);
-            if(ClaudeChrome.IsPath(app.path)) return; // Chrome sandbox workers share this image; only the explicit root entry uses the launch gate.
             PackageIdentity package=PackagePolicy.Find(app.path);
             if(package!=null) { Unintercept(app); PackagePolicy.Enable(app,package); return; }
             string debugger=TerminalProcess.IsConsole(app.path) ? Path.Combine(Path.GetDirectoryName(Exe),"IpGuard.Terminal.exe") : Exe;
@@ -54,7 +54,6 @@ namespace IpGuard {
         }
         public static void Unintercept(Target app) {
             RequireAdmin();
-            if(ClaudeChrome.IsPath(app.path)) return;
             PackagePolicy.Disable(app.id);
             foreach (RegistryView view in Views) {
                 using (RegistryKey root = RegistryKey.OpenBaseKey(RegistryHive.LocalMachine, view))
@@ -101,7 +100,7 @@ namespace IpGuard {
         }
         public static void Block(Target app, bool blocked) {
             RequireAdmin();
-            ConnectionPolicy.Block(app,blocked,FixedProxyPort);
+            ConnectionPolicy.Block(app,blocked,app.enhanced ? EnhancedProxyPort : FixedProxyPort);
             // Deployed WFAS rules are retired only after the replacement policy succeeds.
             RemoveRules(Firewall(),app,"out","in","v6out","v6in");
         }
@@ -109,27 +108,9 @@ namespace IpGuard {
             ConnectionPolicy.Block(app,false);
             RemoveRules(Firewall(),app,"out","in","v6out","v6in");
         }
-        public static void Autostart(bool enable, string appExe) {
-            RequireAdmin();
-            dynamic service = Activator.CreateInstance(Type.GetTypeFromProgID("Schedule.Service", true)); service.Connect();
-            dynamic folder = service.GetFolder("\\"); string name = Owner;
-            if (!enable) {
-                try { folder.DeleteTask(name, 0); }
-                catch (System.Runtime.InteropServices.COMException e) { if ((uint)e.HResult != 0x80070002) throw; }
-                return;
-            }
-            if (!File.Exists(appExe) || Path.GetExtension(appExe).ToLowerInvariant() != ".exe") throw new Exception("开机启动需要已安装的桌面程序。");
-            dynamic task = service.NewTask(0); task.RegistrationInfo.Description = "IP Guard";
-            task.Principal.UserId = Sid; task.Principal.LogonType = 3; task.Principal.RunLevel = 1;
-            task.Settings.Enabled = true; task.Settings.StartWhenAvailable = true;
-            task.Settings.DisallowStartIfOnBatteries = false; task.Settings.StopIfGoingOnBatteries = false;
-            task.Settings.ExecutionTimeLimit = "PT0S"; task.Settings.MultipleInstances = 2;
-            dynamic trigger = task.Triggers.Create(9); trigger.UserId = Sid; trigger.Enabled = true;
-            dynamic action = task.Actions.Create(0); action.Path = appExe; action.Arguments = "--background"; action.WorkingDirectory = Path.GetDirectoryName(appExe);
-            folder.RegisterTaskDefinition(name, task, 6, Sid, null, 3, null);
-        }
         public static void Recover() {
             RequireAdmin();
+            var kernel=ProcessNetwork.OwnedDriverRegistration.Read();if(kernel!=null) kernel.Uninstall();
             ConnectionPolicy.Recover();
             DesktopProxyPolicy.Restore();
             BrowserHost.Unregister();
@@ -151,7 +132,7 @@ namespace IpGuard {
             dynamic p = Firewall(); List<string> remove = new List<string>();
             foreach (dynamic r in p.Rules) if ((string)r.Grouping == Owner) remove.Add((string)r.Name);
             foreach (string n in remove) p.Rules.Remove(n);
-            Autostart(false, null);
+            StartupPolicy.Configure(false,null);
             Config c = new Config();
             if (File.Exists(Data.ConfigPath)) File.Copy(Data.ConfigPath, Data.ConfigPath + ".recovery.bak", true);
             Data.Save(c);

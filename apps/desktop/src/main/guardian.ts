@@ -43,6 +43,7 @@ export class NativeCommandError extends Error {
 }
 
 export class Guardian extends EventEmitter {
+  enhancementPolicy: import("@ip-guard/electron").EgressPolicy | undefined;
   private readonly claude: ClaudeIPv4;
   private ready: Promise<void> = Promise.resolve();
   private resolveReady: (() => void) | undefined;
@@ -90,7 +91,7 @@ export class Guardian extends EventEmitter {
       stdio: ["pipe", "pipe", "pipe"],
     });
     this.child = child;
-    this.helloTimer = setTimeout(() => this.fail("原生组件握手失败，请重新安装当前版本。"), 15000);
+    this.helloTimer = setTimeout(() => this.fail("原生组件握手失败，请重新安装当前版本。"), 60000);
     if (child.stdout)
       createInterface({ input: child.stdout }).on("line", (line) => {
         try {
@@ -107,7 +108,13 @@ export class Guardian extends EventEmitter {
               return;
             }
             this.emit("identity", message.sid);
-            this.send({ action: "initialize", version: nativeVersion, protocol: nativeProtocol });
+            this.send({
+              action: "initialize",
+              version: nativeVersion,
+              protocol: nativeProtocol,
+              executable: process.execPath,
+              enhancementPolicy: this.enhancementPolicy,
+            });
             return;
           }
           if (message.type === "probe" && message.id) {
@@ -216,6 +223,7 @@ export class Guardian extends EventEmitter {
         ready: false,
         checking: false,
         running: [],
+        otherModelRunning: [],
         reason: message,
       };
       this.emit("snapshot", this.snapshot);

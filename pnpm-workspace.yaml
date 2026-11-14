@@ -45,6 +45,7 @@ catalog:
   # desktop
   electron: ^45.0.0
   electron-builder: ^26.15.3
+  socks: 2.8.10
 
 overrides:
   vite@*: "catalog:"

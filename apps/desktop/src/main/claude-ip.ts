@@ -63,6 +63,7 @@ export class ClaudeIPv4 extends EventEmitter<{
     this.route = new AbortController();
   }
   private async selectProxy(proxy: string | null) {
+    if (this.proxy === proxy) return;
     this.route.abort();
     this.route = new AbortController();
     if (this.pending) await this.pending;
@@ -149,7 +150,7 @@ export class ClaudeIPv4 extends EventEmitter<{
           }
           this.progress({ step: "dns", label: "DNS 解析", status: "running", detail: "claude.ai" });
           const proxy = await bounded(transport.resolveProxy(claudeIpv4Endpoint), signal);
-          adapter = this.proxy ? "独立固定节点" : proxy === "DIRECT" ? "系统直连" : "系统代理";
+          adapter = this.proxy ? "受控代理通道" : proxy === "DIRECT" ? "系统直连" : "系统代理";
           if (proxy !== "DIRECT")
             this.progress({
               step: "dns",

@@ -1,7 +1,8 @@
 {
   "name": "ip-guard",
-  "version": "0.11.0",
+  "version": "0.12.0",
   "private": true,
+  "license": "GPL-3.0-only",
   "type": "module",
   "scripts": {
     "version:app": "node scripts/set-version.mjs",

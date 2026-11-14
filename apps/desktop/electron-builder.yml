@@ -9,6 +9,7 @@ files:
   - dist/preload/**/*
   - dist/renderer/**/*
 extraResources:
+  # Web-only Claude guard; no browser-wide proxy or extension management.
   - from: ../browser-extension/dist
     to: browser-extension
   - from: dist/native/${version}
@@ -19,6 +20,8 @@ extraResources:
     to: recover.cmd
   - from: dist/release-info.json
     to: release-info.json
+  - from: dist/drivers/fort
+    to: drivers/fort
 win:
   icon: assets/icon.ico
   requestedExecutionLevel: asInvoker

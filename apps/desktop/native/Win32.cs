@@ -22,6 +22,8 @@ namespace IpGuard {
         [StructLayout(LayoutKind.Explicit, Size = 160)] public struct DebugInfo {
             [FieldOffset(0)] public IntPtr file;
             [FieldOffset(0)] public uint exception;
+            [FieldOffset(8)] public IntPtr process;
+            [FieldOffset(16)] public IntPtr thread;
         }
         [StructLayout(LayoutKind.Sequential)] public struct DebugEvent { public uint code, pid, tid; public DebugInfo info; }
         [DllImport("kernel32.dll", CharSet=CharSet.Unicode, SetLastError=true)] public static extern IntPtr CreateJobObject(IntPtr security, string name);
@@ -42,6 +44,7 @@ namespace IpGuard {
         [DllImport("kernel32.dll", SetLastError=true)] public static extern IntPtr OpenThread(uint access, bool inherit, uint tid);
         [DllImport("kernel32.dll", SetLastError=true)] public static extern uint GetProcessIdOfThread(IntPtr thread);
         [DllImport("kernel32.dll", SetLastError=true)] public static extern bool DebugActiveProcess(uint pid);
+        [DllImport("kernel32.dll", SetLastError=true)] public static extern bool DebugActiveProcessStop(uint pid);
         [DllImport("kernel32.dll", CharSet=CharSet.Unicode, SetLastError=true)] public static extern bool CreateProcess(string app, StringBuilder command, IntPtr pa, IntPtr ta, bool inherit, uint flags, IntPtr environment, string cwd, ref StartupInfo startup, out ProcessInfo info);
         [DllImport("kernel32.dll", SetLastError=true)] public static extern bool WaitForDebugEvent(out DebugEvent debug, uint timeout);
         [DllImport("kernel32.dll", SetLastError=true)] public static extern bool ContinueDebugEvent(uint pid, uint tid, uint status);

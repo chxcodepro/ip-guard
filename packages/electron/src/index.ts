@@ -1,14 +1,19 @@
 import { z } from "zod";
 
-import { claudeChromeStateSchema } from "./claude-chrome.ts";
+import { proxyEnhancementStateSchema, proxySettingsSchema } from "./proxy-enhancement.ts";
+export { proxyAddressSchema, proxySettingsSchema } from "./proxy-enhancement.ts";
+export type {
+  ProxySettings,
+  ProxyEnhancementState,
+  EnhancementVerification,
+} from "./proxy-enhancement.ts";
+
+import { commandProtectionSchema } from "./command-protection.ts";
+export { commandProtectionSchema, initialCommandProtection } from "./command-protection.ts";
+export type { CommandProtection } from "./command-protection.ts";
+
 import { extensionVersionSchema } from "./extension-version.ts";
 import { egressPolicySchema, egressStateSchema } from "./fixed-egress.ts";
-export {
-  claudeChromeExtensionId,
-  claudeChromeStoreUrl,
-  isClaudeChromePath,
-} from "./claude-chrome.ts";
-export type { ClaudeChromeState } from "./claude-chrome.ts";
 import { allowedIpsSchema, ipv4Attempts } from "./ipv4-policy.ts";
 export { egressPolicySchema } from "./fixed-egress.ts";
 export type { EgressPolicy, EgressState } from "./fixed-egress.ts";
@@ -20,11 +25,12 @@ export {
   publicIPv4Schema,
 } from "./ipv4-policy.ts";
 export { formatIPText } from "./ip-display.ts";
+export { programProtectionStatus } from "./program-protection-status.ts";
 export { extensionVersionSchema, isNewerExtensionVersion } from "./extension-version.ts";
 export { claudeDesktopFamilies, isClaudeDesktopPath } from "./claude-desktop.ts";
 
-export const nativeVersion = "0.11.0";
-export const nativeProtocol = 11;
+export const nativeVersion = "0.12.0";
+export const nativeProtocol = 18;
 export const browserExtensionId = "blmgamidelconfabgilaacbkokomegep";
 export const browserHostName = "com.ipguard.browser";
 export const browserStateSchema = z
@@ -140,6 +146,8 @@ export const appSchema = z.object({
   name: z.string().min(1).max(100),
   path: z.string().min(4).max(1024),
   arguments: z.string().max(4096),
+  apiScope: z.enum(["auto", "claude", "other"]).default("auto"),
+  enhanced: z.boolean().default(false),
   enabled: z.boolean(),
 });
 export const logSchema = z.object({
@@ -161,7 +169,24 @@ export const probeStateSchema = z.object({
   phase: z.enum(["idle", "checking", "passed", "failed"]),
 });
 export type ProbeState = z.infer<typeof probeStateSchema>;
+export const startupStatusSchema = z.object({
+  enabled: z.boolean(),
+  state: z.enum(["unknown", "off", "waiting", "running", "ready", "error"]),
+  message: z.string(),
+});
+export const initialStartupStatus = {
+  enabled: false,
+  state: "unknown",
+  message: "等待检查启动项",
+} as const;
 export const snapshotSchema = z.object({
+  enhancementReady: z.boolean().default(false),
+  enhancementReason: z.string().default("等待增强出口复核"),
+  enhancementPhase: z.enum(["idle", "checking", "passed", "blocked", "failed"]).default("idle"),
+  driver: commandProtectionSchema,
+  commandBlockId: z.string(),
+  commandBlockReason: z.string(),
+  commandBlockAppId: z.string(),
   egress: egressPolicySchema.nullable(),
   online: z.boolean(),
   admin: z.boolean(),
@@ -177,7 +202,9 @@ export const snapshotSchema = z.object({
   reason: z.string(),
   detection: z.string(),
   running: z.array(z.string()),
+  otherModelRunning: z.array(z.string()),
   autostart: z.boolean(),
+  startup: startupStatusSchema,
   rulesLocked: z.boolean(),
   networkAdapters: z.array(adapterSchema),
   watchedAdapter: adapterSchema,
@@ -186,16 +213,19 @@ export const snapshotSchema = z.object({
     expectedIps: allowedIpsSchema,
     intervalSeconds: z.number().int().min(1).max(60),
   }),
-  apps: z.array(appSchema.extend({ pathIssue: z.string() })),
+  apps: z.array(appSchema.extend({ pathIssue: z.string(), isClaudeCode: z.boolean() })),
   logs: z.array(logSchema),
 });
 export const commandSchema = z.discriminatedUnion("action", [
-  z.object({ action: z.literal("chrome:status") }),
-  z.object({ action: z.literal("chrome:prepare") }),
-  z.object({ action: z.literal("chrome:open"), install: z.boolean() }),
+  z.object({ action: z.literal("extension:setup") }),
+  z.object({ action: z.literal("extension:status") }),
+  z.object({ action: z.literal("proxy:status") }),
+  z.object({ action: z.literal("proxy:configure"), settings: proxySettingsSchema }),
+  z.object({ action: z.literal("enhance"), id: z.uuid(), enabled: z.boolean() }),
+  z.object({ action: z.literal("kernel:install") }),
+  z.object({ action: z.literal("kernel:repair") }),
+  z.object({ action: z.literal("kernel:rescue") }),
   z.object({ action: z.literal("egress:status") }),
-  z.object({ action: z.literal("egress:import"), label: z.string().trim().min(1).max(100) }),
-  z.object({ action: z.literal("egress:enable") }),
   z.object({ action: z.literal("egress:disable") }),
   z.object({ action: z.literal("egress:retry") }),
   z.object({ action: z.literal("status") }),
@@ -231,15 +261,14 @@ export const commandSchema = z.discriminatedUnion("action", [
   z.object({ action: z.literal("update:download") }),
   z.object({ action: z.literal("update:install") }),
   z.object({ action: z.literal("update:releases") }),
-  z.object({ action: z.literal("extension:setup") }),
-  z.object({ action: z.literal("extension:status") }),
 ]);
 export type Settings = z.infer<typeof settingsSchema>;
 export type ProtectedApp = z.infer<typeof appSchema>;
 export type Snapshot = z.infer<typeof snapshotSchema>;
 export type Command = z.infer<typeof commandSchema>;
 export const replySchema = z.object({
-  chrome: claudeChromeStateSchema.optional(),
+  extension: extensionStatusSchema.optional(),
+  proxyEnhancement: proxyEnhancementStateSchema.optional(),
   egress: egressStateSchema.optional(),
   snapshot: snapshotSchema.optional(),
   selectedPath: z.string().optional(),
@@ -249,7 +278,6 @@ export const replySchema = z.object({
   ipv4: ipv4Schema.optional(),
   claude: claudeStateSchema.optional(),
   appUpdate: updateStateSchema.optional(),
-  extension: extensionStatusSchema.optional(),
 });
 export type Reply = z.infer<typeof replySchema>;
 export interface DesktopApi {

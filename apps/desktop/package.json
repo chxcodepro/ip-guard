@@ -1,7 +1,8 @@
 {
   "name": "@ip-guard/desktop",
-  "version": "0.11.0",
+  "version": "0.12.0",
   "private": true,
+  "license": "GPL-3.0-only",
   "description": "Windows application IPv4 launch gate and network guardian",
   "type": "module",
   "main": "./dist/main/index.js",
@@ -9,12 +10,13 @@
     "#src/*": "./src/*"
   },
   "scripts": {
-    "build": "node scripts/build-assets.ts && node scripts/build-native.ts && vp build --config vite.main.config.ts && vp build --config vite.preload.config.ts",
+    "build": "node scripts/prepare-fort.ts && node scripts/build-assets.ts && node scripts/build-native.ts && vp build --config vite.main.config.ts && vp build --config vite.preload.config.ts",
     "package": "vp run --filter @ip-guard/browser-extension build && vp run --filter @ip-guard/web build && node scripts/copy-renderer.ts && vp run build && node scripts/package.ts",
     "dev": "vp run build && node scripts/dev.ts"
   },
   "dependencies": {
-    "electron-updater": "^6.8.11"
+    "electron-updater": "^6.8.11",
+    "socks": "catalog:"
   },
   "devDependencies": {
     "@ip-guard/config": "workspace:*",

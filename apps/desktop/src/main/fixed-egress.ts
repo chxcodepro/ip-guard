@@ -1,6 +1,5 @@
 import { spawn } from "node:child_process";
-import { randomUUID } from "node:crypto";
-import { copyFile, mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
+import { readFile, rename, writeFile } from "node:fs/promises";
 import { createConnection, createServer } from "node:net";
 import type { Server, Socket } from "node:net";
 import path from "node:path";
@@ -14,7 +13,6 @@ import { egressPolicySchema } from "@ip-guard/electron";
 
 import type { ClaudeIPv4 } from "./claude-ip.ts";
 import { coreConfiguration, snapshotV2rayNode } from "./egress-config.ts";
-import type { NodeSnapshot } from "./egress-config.ts";
 import { guardDataDirectory } from "./guard-data.ts";
 import { nativePath } from "./guardian.ts";
 
@@ -24,7 +22,6 @@ const profileSchema = z.object({
   engine: z.enum(["xray", "sing-box"]),
   outbound: z.record(z.string(), z.unknown()),
 });
-type Profile = z.infer<typeof profileSchema>;
 const profileDirectory = (id: string) => {
   const root = path.resolve(guardDataDirectory(), "egress");
   const folder = path.resolve(root, z.uuid().parse(id));
@@ -46,9 +43,9 @@ function listen(server: Server, port: number): Promise<number> {
 }
 
 export class FixedEgress {
+  probeAddress = "";
   private readonly claude: ClaudeIPv4;
   state: EgressState = { profile: null, phase: "disabled", error: "" };
-  private profile: Profile | undefined;
   private child: ReturnType<typeof spawn> | undefined;
   private server: Server | undefined;
   private sockets = new Set<Socket>();
@@ -73,43 +70,8 @@ export class FixedEgress {
       if (policy) await this.start(policy);
     } catch (error) {
       if (error && typeof error === "object" && Reflect.get(error, "code") === "ENOENT") return;
-      this.fail("固定出口配置读取或启动失败，请在防护设置中重新导入节点");
+      this.fail("历史独立出口配置读取或启动失败，请恢复原配置或关闭该出口");
     }
-  }
-
-  async importCurrent(executable: string, label: string) {
-    if (this.state.phase !== "disabled") throw new Error("请先取消锁定并关闭固定出口");
-    if (path.basename(executable).toLowerCase() !== "v2rayn.exe")
-      throw new Error("请选择 v2rayN.exe");
-    const root = path.dirname(executable);
-    const source = path.join(root, "binConfigs/config.json");
-    if ((await stat(source)).size > 1048576) throw new Error("v2rayN 配置超过 1 MB");
-    let node: NodeSnapshot;
-    try {
-      node = snapshotV2rayNode(JSON.parse(await readFile(source, "utf8")));
-    } catch (error) {
-      if (error instanceof z.ZodError || error instanceof SyntaxError)
-        throw new Error("v2rayN 当前配置格式不受支持，请先选择单个普通节点");
-      throw error;
-    }
-    if (!(await safeStorage.isAsyncEncryptionAvailable()))
-      throw new Error("Windows 凭据加密暂不可用，未保存节点");
-    const id = randomUUID();
-    const profile: Profile = { id, label, ...node };
-    const folder = profileDirectory(id);
-    await mkdir(folder, { recursive: true });
-    try {
-      const binary = node.engine === "xray" ? "bin/xray/xray.exe" : "bin/sing_box/sing-box.exe";
-      await copyFile(path.join(root, binary), path.join(folder, `${node.engine}.exe`));
-      const sealed = await safeStorage.encryptStringAsync(JSON.stringify(profile));
-      await writeFile(path.join(folder, "profile.bin.tmp"), sealed, { flag: "wx" });
-      await rename(path.join(folder, "profile.bin.tmp"), path.join(folder, "profile.bin"));
-    } catch {
-      await rm(folder, { recursive: true, force: true });
-      throw new Error("节点或独立核心保存失败，请确认 v2rayN 安装完整");
-    }
-    this.profile = profile;
-    this.state = { profile: { id, label, engine: node.engine }, phase: "disabled", error: "" };
   }
 
   private async load(id: string) {
@@ -128,15 +90,8 @@ export class FixedEgress {
       await writeFile(`${file}.tmp`, await safeStorage.encryptStringAsync(decrypted.result));
       await rename(`${file}.tmp`, file);
     }
-    this.profile = { ...profile, ...node };
     this.state.profile = { id, label: profile.label, engine: profile.engine };
-    return this.profile;
-  }
-
-  async prepare(): Promise<EgressPolicy> {
-    if (!this.profile) throw new Error("请先从 v2rayN 导入一个固定节点");
-    await this.closeResources();
-    return this.start({ id: this.profile.id, label: this.profile.label, port: 0 });
+    return { ...profile, ...node };
   }
 
   async retry(policy: EgressPolicy) {
@@ -158,6 +113,7 @@ export class FixedEgress {
       const profile = await this.load(policy.id);
       const reserve = createServer();
       const backendPort = await listen(reserve, 0);
+      this.probeAddress = `http://127.0.0.1:${backendPort}`;
       await new Promise<void>((resolve, reject) =>
         reserve.close((error) => (error ? reject(error) : resolve())),
       );
@@ -236,6 +192,7 @@ export class FixedEgress {
   }
 
   private async closeResources() {
+    this.probeAddress = "";
     this.stopping = true;
     this.setAllowed(false);
     const server = this.server;

@@ -58,17 +58,18 @@ export function UpdatePanel() {
   };
   const waiting = busy || ["checking", "downloading", "installing"].includes(state.phase);
   return (
-    <section className="panel settings-panel update-panel">
-      <div className="panel-heading">
-        <h2>软件更新</h2>
-        <span className="subtle-label">GITHUB RELEASES</span>
-      </div>
+    <div
+      className="settings-group update-panel"
+      role="group"
+      aria-labelledby="software-update-title"
+    >
       <div className="setting-row">
         <span className="setting-icon">
           <ArrowDownToLine size={19} />
         </span>
-        <div>
-          <strong>当前版本 {state.currentVersion}</strong>
+        <div className="setting-info">
+          <strong id="software-update-title">软件更新</strong>
+          <span className="setting-detail">当前版本 {state.currentVersion}</span>
           {state.latestVersion && (
             <span>
               {["checking", "error"].includes(state.phase)
@@ -134,6 +135,6 @@ export function UpdatePanel() {
           <time>{new Date(state.checkedAt).toLocaleTimeString("zh-CN", { hour12: false })}</time>
         )}
       </div>
-    </section>
+    </div>
   );
 }

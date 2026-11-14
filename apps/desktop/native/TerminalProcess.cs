@@ -52,7 +52,7 @@ namespace IpGuard {
             if(original==IntPtr.Zero || original==new IntPtr(-1)) return original;
             IntPtr handle; Win32.Check(DuplicateHandle(GetCurrentProcess(),original,GetCurrentProcess(),out handle,0,true,2),"无法继承终端输入输出"); handles.Add(handle); return handle;
         }
-        public Win32.ProcessInfo Start(string exe,string command,IntPtr environment,uint environmentFlags) {
+        public Win32.ProcessInfo Start(string exe,string command,IntPtr environment,uint environmentFlags,bool protectChildren=false) {
             StartupEx info=new StartupEx(); info.startup.cb=Marshal.SizeOf(info);
             info.startup.flags=0x100; info.startup.stdin=Copy(-10); info.startup.stdout=Copy(-11); info.startup.stderr=Copy(-12);
             if(handles.Count>0) {
@@ -65,7 +65,7 @@ namespace IpGuard {
                 Win32.Check(UpdateProcThreadAttribute(attributes,0,new IntPtr(0x20002),handleArray,new IntPtr(IntPtr.Size*handles.Count),IntPtr.Zero,IntPtr.Zero)); info.attributes=attributes;
             }
             Win32.ProcessInfo process;
-            Win32.Check(CreateProcess(exe,new StringBuilder(command),IntPtr.Zero,IntPtr.Zero,handles.Count>0,0x80006|environmentFlags,environment,Environment.CurrentDirectory,ref info,out process),"无法在原终端创建受保护程序");
+            Win32.Check(CreateProcess(exe,new StringBuilder(command),IntPtr.Zero,IntPtr.Zero,handles.Count>0,(protectChildren ? 0x80005U : 0x80006U)|environmentFlags,environment,Environment.CurrentDirectory,ref info,out process),"无法在原终端创建受保护程序");
             return process;
         }
         public void Dispose() {

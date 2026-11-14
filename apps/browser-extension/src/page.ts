@@ -59,7 +59,8 @@ async function render() {
   const saved = await chrome.storage.session.get(["state", "receivedAt"]);
   const parsed = browserStateSchema.safeParse(saved.state);
   const state = parsed.success ? parsed.data : undefined;
-  const fresh = typeof saved.receivedAt === "number" && Date.now() - saved.receivedAt < 3500;
+  const age = typeof saved.receivedAt === "number" ? Date.now() - saved.receivedAt : Infinity;
+  const fresh = age >= 0 && age < 3500;
   const phase = fresh && state ? state.phase : "offline";
   const installedVersion = chrome.runtime.getManifest().version;
   const latestVersion = state?.latestExtensionVersion ?? state?.appVersion ?? "";
@@ -120,6 +121,8 @@ open.addEventListener("click", () => {
     const url = new URL(new URLSearchParams(location.search).get("target") ?? target);
     if (
       url.protocol === "https:" &&
+      !url.username &&
+      !url.password &&
       (url.hostname === "claude.ai" || url.hostname.endsWith(".claude.ai"))
     )
       target = url.href;

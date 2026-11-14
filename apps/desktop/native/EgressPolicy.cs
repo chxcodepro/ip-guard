@@ -18,7 +18,6 @@ namespace IpGuard {
             if(!Guid.TryParseExact(id,"D",out parsed) || String.IsNullOrWhiteSpace(label) || label.Length>100 || port<1024 || port>65535) throw new Exception("固定出口配置无效。");
         }
         public static void ValidateTarget(Target target) {
-            if(ClaudeChrome.IsPath(target.path)) return;
             if(PackagePolicy.IsClaudeDesktop(target.path)) {
                 FileVersionInfo version=FileVersionInfo.GetVersionInfo(target.path);
                 if(new Version(version.FileMajorPart,version.FileMinorPart,Math.Max(0,version.FileBuildPart))<new Version(1,44121,1)) throw new Exception("此 Claude Desktop 版本尚未支持固定代理策略，请先升级 Desktop。");
@@ -28,11 +27,22 @@ namespace IpGuard {
     public sealed class EgressEnvironment : IDisposable {
         public IntPtr pointer;
         public uint flags;
-        public EgressEnvironment(EgressPolicy policy) {
-            if(policy==null) return;
+        internal static Dictionary<string,string> ProxyVariables(EgressPolicy policy) {
+            policy.Validate();
+            var values=new Dictionary<string,string>(StringComparer.Ordinal);
+            foreach(string key in new[] {"HTTP_PROXY","HTTPS_PROXY","ALL_PROXY"}) {
+                values[key]=policy.Url;values[key.ToLowerInvariant()]=policy.Url;
+            }
+            values["NO_PROXY"]="";values["no_proxy"]="";
+            values["CLAUDE_CODE_PROXY_RESOLVES_HOSTS"]="1";
+            return values;
+        }
+        public EgressEnvironment(EgressPolicy policy,bool privateCli) {
+            if(policy==null && !privateCli) return;
             var values=new SortedDictionary<string,string>(StringComparer.OrdinalIgnoreCase);
             foreach(DictionaryEntry item in Environment.GetEnvironmentVariables()) values[(string)item.Key]=(string)item.Value;
-            values["HTTP_PROXY"]=policy.Url; values["HTTPS_PROXY"]=policy.Url; values["ALL_PROXY"]=policy.Url; values["NO_PROXY"]="";
+            if(policy!=null) foreach(var entry in ProxyVariables(policy)) values[entry.Key]=entry.Value;
+            if(privateCli) {values["DISABLE_UPDATES"]="1";values["DISABLE_AUTOUPDATER"]="1";}
             pointer=Marshal.StringToHGlobalUni(String.Join("\0",values.Select(entry=>entry.Key+"="+entry.Value))+"\0\0");flags=0x400;
         }
         public void Dispose() {if(pointer!=IntPtr.Zero) {Marshal.FreeHGlobal(pointer);pointer=IntPtr.Zero;}}
