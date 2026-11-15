@@ -78,5 +78,10 @@ jobs:
             apps/desktop/release-posix/*.deb
             apps/desktop/release-posix/*.dmg
             apps/desktop/release-posix/*.zip
-            artifacts/posix-smoke/
+          if-no-files-found: warn
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: POSIX-Smoke-${{ matrix.platform }}-${{ matrix.arch }}
+          path: artifacts/posix-smoke/
           if-no-files-found: warn

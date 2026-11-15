@@ -11,6 +11,7 @@ import {
   isPosixCli,
   posixDataDirectory,
   posixSocketPath,
+  posixBrowserSocketPath,
   writeLauncher,
 } from "./posix-platform.ts";
 
@@ -24,22 +25,25 @@ export async function preparePosixBroker(
   guard: PosixGuard,
   executable: string,
   client: string,
+  endpoint?: string,
 ): Promise<Server> {
-  const socket = posixSocketPath(),
+  const socket = endpoint ?? posixSocketPath(),
     folder = path.dirname(socket);
   await mkdir(folder, { recursive: true, mode: 0o700 });
   const info = await lstat(folder);
   if (!info.isDirectory() || info.isSymbolicLink() || info.uid !== process.getuid?.())
     throw new Error("受管启动目录归属无效");
   await chmod(folder, 0o700);
-  try {
-    const previous = await lstat(socket);
-    if (!previous.isSocket() || previous.uid !== process.getuid?.())
-      throw new Error("受管启动通信路径已被其他文件占用");
-    await unlink(socket);
-  } catch (error) {
-    if (!error || typeof error !== "object" || Reflect.get(error, "code") !== "ENOENT") throw error;
-  }
+  for (const stale of endpoint ? [socket] : [socket, posixBrowserSocketPath()])
+    try {
+      const previous = await lstat(stale);
+      if (!previous.isSocket() || previous.uid !== process.getuid?.())
+        throw new Error("受管启动通信路径已被其他文件占用");
+      await unlink(stale);
+    } catch (error) {
+      if (!error || typeof error !== "object" || Reflect.get(error, "code") !== "ENOENT")
+        throw error;
+    }
   const server = createServer((connection) => {
     let received = false,
       release: (() => void) | undefined;

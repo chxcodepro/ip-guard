@@ -15,10 +15,11 @@ if (!socketPath || origin !== `chrome-extension://${browserExtensionId}/`) proce
 const initial = z.object({
   action: z.literal("watch"),
   protocol: z.literal(1),
-  extensionVersion: z.union([z.literal(""), extensionVersionSchema]),
+  extensionVersion: z.union([z.literal(""), extensionVersionSchema]).default(""),
 });
 let input = Buffer.alloc(0),
-  started = false;
+  started = false,
+  ended = false;
 let connection: ReturnType<typeof createConnection> | undefined;
 let heartbeat: ReturnType<typeof setTimeout> | undefined;
 function send(value: unknown) {
@@ -29,6 +30,8 @@ function send(value: unknown) {
   process.stdout.write(Buffer.concat([header, data]));
 }
 const offline = () => {
+  if (ended) return;
+  ended = true;
   clearTimeout(heartbeat);
   connection?.destroy();
   send({
@@ -61,7 +64,7 @@ process.stdin.on("data", (chunk: Buffer) => {
       connection?.write(JSON.stringify({ extensionVersion: request.extensionVersion }) + "\n"),
     );
     connection.once("error", offline);
-    connection.once("close", () => process.stdin.destroy());
+    connection.once("close", offline);
     const lines = createInterface({ input: connection });
     lines.on("line", (line) => {
       try {
@@ -84,10 +87,12 @@ process.stdin.on("data", (chunk: Buffer) => {
   }
 });
 process.stdin.on("end", () => {
+  ended = true;
   clearTimeout(heartbeat);
   connection?.destroy();
 });
 process.stdout.on("error", () => {
+  ended = true;
   clearTimeout(heartbeat);
   connection?.destroy();
   process.stdin.destroy();

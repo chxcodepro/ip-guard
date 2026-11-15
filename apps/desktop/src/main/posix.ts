@@ -374,11 +374,24 @@ async function start() {
     await loaded;
     await new Promise((resolve) => setTimeout(resolve, 1200));
     const image = await window.webContents.capturePage();
+    const text = await window.webContents.executeJavaScript("document.body.innerText");
+    if (
+      typeof text !== "string" ||
+      !text.includes("受管代理开发版") ||
+      text.includes("管理启动拦截与防火墙需要管理员权限")
+    )
+      throw new Error("POSIX UI capability labels did not load");
+    const { verifyNativeBridge } = await import("./posix-smoke.ts");
+    const bridge = await verifyNativeBridge(
+      process.execPath,
+      path.join(path.dirname(client), "native-host.cjs"),
+    );
     const { mkdir, writeFile } = await import("node:fs/promises");
     const folder = path.resolve("artifacts/posix-smoke");
     await mkdir(folder, { recursive: true });
     await writeFile(path.join(folder, process.platform + ".png"), image.toPNG());
     await writeFile(path.join(folder, process.platform + ".json"), JSON.stringify(guard.snapshot));
+    await writeFile(path.join(folder, process.platform + "-bridge.json"), JSON.stringify(bridge));
     app.quit();
   }
 }
