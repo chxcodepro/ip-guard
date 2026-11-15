@@ -13,6 +13,9 @@
   --g-warning: #916617;
   --g-shadow: 0 2px 6px #202b3403;
   --g-ease: cubic-bezier(0.22, 1, 0.36, 1);
+  --g-font-mono:
+    "Cascadia Mono", "Consolas", "SFMono-Regular", Menlo, "Noto Sans SC Variable",
+    "DejaVu Sans Mono", monospace;
 }
 .dark {
   --g-bg: #14181b;
@@ -68,9 +71,7 @@ button:active:not(:disabled) {
   transform: translateY(1px);
 }
 .mono {
-  font-family:
-    "Cascadia Mono", "Consolas", "SFMono-Regular", Menlo, "DejaVu Sans Mono",
-    "Noto Sans SC Variable", monospace;
+  font-family: var(--g-font-mono);
   font-variant-numeric: tabular-nums;
 }
 .muted,
@@ -1506,9 +1507,7 @@ textarea::placeholder {
   display: block;
 }
 .coffee-ipv6 .coffee-metric strong {
-  font-family:
-    "Cascadia Mono", Consolas, "SFMono-Regular", Menlo, "DejaVu Sans Mono", "Noto Sans SC Variable",
-    monospace;
+  font-family: var(--g-font-mono);
   font-size: 13px;
 }
 .coffee-ipv6 .coffee-risk-marker {
@@ -1542,9 +1541,7 @@ textarea::placeholder {
   display: block;
 }
 .coffee-exits .coffee-metric strong {
-  font-family:
-    "Cascadia Mono", Consolas, "SFMono-Regular", Menlo, "DejaVu Sans Mono", "Noto Sans SC Variable",
-    monospace;
+  font-family: var(--g-font-mono);
   font-size: 17px;
   margin-top: 10px;
 }
