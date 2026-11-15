@@ -45,7 +45,10 @@ namespace IpGuard {
                         enhancementPolicy=Data.Json().Deserialize<EgressPolicy>(Data.Json().Serialize(initialize["enhancementPolicy"]));
                         enhancementPolicy.Validate();
                     }
-                    new Guard(Path.GetFullPath(desktopExe),enhancementPolicy).Run();
+                    object policy;
+                    if(!initialize.TryGetValue("networkPolicy",out policy) || policy==null) throw new Exception("拦截策略初始化缺失，请完整升级。");
+                    var networkPolicy=Data.Json().Deserialize<NetworkPolicyConfig>(Data.Json().Serialize(policy));
+                    new Guard(Path.GetFullPath(desktopExe),enhancementPolicy,networkPolicy).Run();
                 }
                 return 0;
             } catch(Exception e) {

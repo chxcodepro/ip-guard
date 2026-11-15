@@ -4,6 +4,14 @@ import type { Socket } from "node:net";
 import { SocksClient } from "socks";
 
 export type ProxyEndpoint = { protocol: "http" | "socks5"; host: string; port: number };
+export function exitProbeTargets(sourceUrl: string): Set<string> {
+  const source = new URL(sourceUrl);
+  return new Set([
+    "claude.ai:443",
+    "myip.ipip.net:443",
+    source.hostname + ":" + (source.port || 443),
+  ]);
+}
 export function proxyEndpoint(address: string): ProxyEndpoint {
   const url = new URL(address);
   if (
@@ -42,7 +50,8 @@ export function destination(authority: string): { host: string; port: number } {
   const port = Number(authority.slice(authority.lastIndexOf(":") + 1));
   if (!host || port < 1 || port > 65535 || !Number.isInteger(port) || host.length > 253)
     throw new Error("代理目标无效");
-  if (isIP(host) === 6) throw new Error("增强通道仅支持 IPv4 与远程域名解析");
+  if (isIP(host) === 6 && host !== "::1")
+    throw new Error("增强通道仅支持 IPv4、IPv6 本机回环与远程域名解析");
   return { host, port };
 }
 export async function openTunnel(
@@ -95,4 +104,34 @@ export async function openTunnel(
       );
     });
   });
+}
+
+export async function openDirect(target: { host: string; port: number }): Promise<Socket> {
+  const host = target.host.toLowerCase().replace(/\.$/u, "");
+  const hosts = host === "localhost" ? ["::1", "127.0.0.1"] : [host];
+  let failure: unknown;
+  for (const host of hosts) {
+    try {
+      return await new Promise<Socket>((resolve, reject) => {
+        const socket = createConnection({ host, port: target.port });
+        const fail = (error: Error) => {
+          socket.destroy();
+          reject(error);
+        };
+        socket.once("error", fail);
+        socket.setTimeout(hosts.length > 1 ? 1500 : 8000, () =>
+          fail(new Error("直连目标响应超时")),
+        );
+        socket.once("connect", () => {
+          socket.off("error", fail);
+          socket.setTimeout(0);
+          socket.pause();
+          resolve(socket);
+        });
+      });
+    } catch (error) {
+      failure = error;
+    }
+  }
+  throw failure;
 }

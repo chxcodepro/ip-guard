@@ -1,6 +1,6 @@
 # Fort 3.20.9 / ABI 65 的最小配置契约
 
-以下数值独立取自上游 `fortconf.h`、`fortioctl.h`、`fortconf_valid.c`、`confdata.cpp`。原型仅面向 Windows x64，小端序；输入输出都是变长数据，不使用 C# 默认结构布局猜测协议。
+以下数值独立取自上游 `fortconf.h`、`fortioctl.h`、`fortconf_valid.c`、`confdata.cpp`。未设置本机例外时保留以下最小配置。原型仅面向 Windows x64，小端序；输入输出都是变长数据，不使用 C# 默认结构布局猜测协议。
 
 | 项目 | 线协议 |
 | --- | --- |
@@ -33,6 +33,14 @@
 ```
 
 单个路径 `C:\apps\claude.exe` 为 18 个 UTF-16 字符，路径长度字段 36，整个 SETCONF 208 字节，应用项起始于 76，规则起始于 144。这些固定值用于内存自检，尚未执行。
+
+## 本机服务例外
+
+配置本机端口时，将原代理 AND、回环出站 AND、回环入站 AND 放入 LIST_OR（type 14）。回环分支使用 AREA（type 8，UINT16 mask=1）、TCP（type 4，protocol=6）、DIRECTION（type 6，IN=1 / OUT=2）；出站匹配远端端口（type 1），入站匹配本地端口（type 3）。这些分支不限定 IP version，保留 IPv4 与 IPv6 回环；AREA_LOCALHOST 在上游运行代码中依据 `conn->is_loopback`，局域网地址不因此获准。
+
+只有本机端口 5173 时，规则长度为 140 字节，完整载荷 284 字节，规则前缀为 `61 20 00 00 70 44 00 00`；旧代理分支保持原字节。端口数据仍是 UINT8 数量、UINT8 范围数量、UINT16 端口列表，并补齐到四字节。新增本机分支同样使用末尾 terminating deny，不修改 boot / filter_locals 等故障封锁位。
+
+原生回传已确认的端口。只有 Fort 配置确认后才移除增强根程序上冲突的重复 WFP pin；根程序的 IP 暂停过滤保留，未增强或未确认内核时继续原 pin。端口变化会停止增强会话、排空 Job 并重载，应用失败保持暂停，不自动反复加载故障驱动。新分支仍需隔离系统实机验收。
 
 持久提供者数据 `FORT_PROV_BOOT_CONF` 为四字节值 **3**：boot_filter + filter_locals。它和四个无条件 ALE 持久 BLOCK 项必须在驱动加载前准备；仅把配置 flags 的 boot 位设为 1，无法证明设备级故障封锁已生效。
 

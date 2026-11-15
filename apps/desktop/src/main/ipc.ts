@@ -3,7 +3,12 @@ import path from "node:path";
 
 import { app, BrowserWindow, dialog, ipcMain, shell } from "electron";
 
-import { commandSchema, desktopChannels, isClaudeDesktopPath } from "@ip-guard/electron";
+import {
+  commandSchema,
+  desktopChannels,
+  isClaudeDesktopPath,
+  localPolicyPorts,
+} from "@ip-guard/electron";
 import type { Reply, Snapshot } from "@ip-guard/electron";
 
 import type { BrowserBridge } from "#src/main/browser-bridge.ts";
@@ -14,6 +19,7 @@ import type { FixedEgress } from "#src/main/fixed-egress.ts";
 import { guardDataDirectory } from "#src/main/guard-data.ts";
 import type { Guardian } from "#src/main/guardian.ts";
 import { NativeCommandError, nativePath } from "#src/main/guardian.ts";
+import type { NetworkPolicies } from "#src/main/network-policies.ts";
 import { claudePresets } from "#src/main/presets.ts";
 import type { ProxyEnhancement } from "#src/main/proxy-enhancement.ts";
 import { isTrustedUrl } from "#src/main/renderer-route.ts";
@@ -28,6 +34,7 @@ export const setupIpc = (
   fixedEgress: FixedEgress,
   proxyEnhancement: ProxyEnhancement,
   browser: BrowserBridge,
+  networkPolicies: NetworkPolicies,
 ) => {
   updates.on("update", (state) => {
     for (const window of BrowserWindow.getAllWindows())
@@ -36,6 +43,7 @@ export const setupIpc = (
   let stoppingClaude = false;
   let configuringEgress = false;
   let configuringKernel = false;
+  let configuringPolicy = false;
   const reconcileEgressFailure = async (error: unknown): Promise<Reply> => {
     let snapshot: Snapshot;
     try {
@@ -65,6 +73,99 @@ export const setupIpc = (
     )
       throw new Error("Untrusted IPC sender");
     const command = commandSchema.parse(input);
+    const policyState = () =>
+      networkPolicies.status(
+        guardian.snapshot,
+        fixedEgress.forwardingAllowed || proxyEnhancement.forwardingAllowed,
+      );
+    if (command.action === "network:status") return { networkPolicy: policyState() };
+    if (command.action === "network:save") {
+      if (configuringPolicy || configuringKernel || configuringEgress)
+        throw new Error("过滤配置正在处理中，请稍后重试。");
+      configuringPolicy = true;
+      try {
+        const snapshot = await guardian.request("status");
+        if (!snapshot.admin) throw new Error("请以管理员身份管理拦截策略。");
+        const next = networkPolicies.prepare(command.settings),
+          previous = networkPolicies.record;
+        const ports = localPolicyPorts(next.settings);
+        const reload =
+          snapshot.apps.some((app) => app.enabled && app.enhanced) &&
+          (!snapshot.driver.ready || ports.join(",") !== snapshot.networkPolicy.localPorts.join(","));
+        const direct = next.settings.rules.filter(
+          (rule) =>
+            rule.enabled &&
+            rule.action === "direct" &&
+            !previous.settings.rules.some(
+              (old) =>
+                old.enabled &&
+                old.action === "direct" &&
+                old.host === rule.host &&
+                old.port === rule.port,
+            ),
+        );
+        if (reload || direct.length) {
+          const affected = snapshot.apps
+            .filter((app) => app.enabled && app.enhanced)
+            .map((app) => app.name);
+          const answer = await dialog.showMessageBox({
+            type: "warning",
+            title: "应用拦截策略",
+            message: reload ? "结束增强会话并重载本机端口规则？" : "允许这些目标直连？",
+            detail: [
+              reload
+                ? "受影响：" +
+                  affected.join("、") +
+                  "。请先保存工作。过滤器重载可能短暂影响联网，驱动仍处于实验阶段。"
+                : "",
+              direct.length
+                ? "新增直连：" +
+                  direct.map((rule) => rule.host + ":" + rule.port).join("、") +
+                  "。公网直连可能暴露原公网 IP；本机端口只应指向可信开发服务，代理或转发服务也可能绕过固定出口。"
+                : "",
+            ]
+              .filter(Boolean)
+              .join("\n"),
+            buttons: ["取消", "保存并应用"],
+            defaultId: 0,
+            cancelId: 0,
+          });
+          if (answer.response !== 1) return { cancelled: true, networkPolicy: policyState() };
+        }
+        networkPolicies.applying = true;
+        fixedEgress.setAllowed(false);
+        proxyEnhancement.setAllowed(false);
+        await networkPolicies.write(next);
+        try {
+          const applied = await guardian.request("network:apply", {
+            policy: { revision: next.revision, localPorts: ports },
+          });
+          guardian.networkPolicy = { revision: next.revision, localPorts: ports };
+          networkPolicies.commit(next);
+          fixedEgress.policyChanged();
+          proxyEnhancement.policyChanged();
+          void proxyEnhancement.refresh();
+          return { snapshot: applied, networkPolicy: policyState() };
+        } catch (error) {
+          guardian.networkPolicy = {
+            revision: previous.revision,
+            localPorts: localPolicyPorts(previous.settings),
+          };
+          try {
+            await networkPolicies.write(previous, false);
+          } catch (restoreError) {
+            const detail =
+              "策略应用失败，恢复原文件也未完成；连接保持暂停，请恢复 network-policy.json.bak。";
+            networkPolicies.fail(detail);
+            throw new AggregateError([error, restoreError], detail);
+          }
+          throw error;
+        }
+      } finally {
+        networkPolicies.applying = false;
+        configuringPolicy = false;
+      }
+    }
     const verifyEnhancement = async () => {
       const snapshot = await guardian.request("status");
       if (!snapshot.rulesLocked) throw new Error("请先锁定允许的公网 IPv4");

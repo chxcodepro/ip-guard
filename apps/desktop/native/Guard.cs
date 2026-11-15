@@ -30,6 +30,7 @@ namespace IpGuard {
         readonly List<object> logs = new List<object>();
         readonly Config config;
         readonly EgressPolicy enhancementPolicy;
+        NetworkPolicyConfig networkPolicy;
         EgressPolicy EnhancementRoute {get {return config.egress ?? enhancementPolicy;}}
         readonly string desktopExe;
         StartupStatus startup=new StartupStatus();
@@ -55,7 +56,7 @@ namespace IpGuard {
         string egressIssue = "";
         long lastVerified;
         DateTime nextCheck = DateTime.MinValue;
-        public Guard(string desktopExe,EgressPolicy enhancementPolicy=null) { this.desktopExe=desktopExe;this.enhancementPolicy=enhancementPolicy; config = Data.Load(); SystemPolicy.FixedProxyPort=config.egress==null ? 0 : config.egress.port;SystemPolicy.EnhancedProxyPort=EnhancementRoute==null ? 0 : EnhancementRoute.port; wifi = new WifiWatch(why => Observe(why, true)); probe=new ClaudeProbe(Emit); commandGuard=new ProcessNetwork.KernelProtection(allowed=>Publish()); RefreshAdapters(); }
+        public Guard(string desktopExe,EgressPolicy enhancementPolicy,NetworkPolicyConfig networkPolicy) { this.desktopExe=desktopExe;this.enhancementPolicy=enhancementPolicy; config = Data.Load(); SystemPolicy.FixedProxyPort=config.egress==null ? 0 : config.egress.port;SystemPolicy.EnhancedProxyPort=EnhancementRoute==null ? 0 : EnhancementRoute.port;networkPolicy.Validate(SystemPolicy.EnhancedProxyPort);this.networkPolicy=networkPolicy;SystemPolicy.LocalDevPorts=networkPolicy.localPorts; wifi = new WifiWatch(why => Observe(why, true)); probe=new ClaudeProbe(Emit); commandGuard=new ProcessNetwork.KernelProtection(allowed=>Publish()); RefreshAdapters(); }
         void RequireCommandChangesClosed(string except=null) {
             if(!config.commandProtection) return;
             foreach(Target app in config.apps.Where(t=>t.enabled && t.enhanced && t.id!=except)) RequireClosed(app);
@@ -63,9 +64,11 @@ namespace IpGuard {
         }
         void LoadCommandGuard(bool recover=false) {
             if(!config.commandProtection) return;
-            try {commandGuard.Start(EnhancementRoute,config.apps.Where(t=>t.enhanced),recover);commandGuard.Allow(healthy && enhancementReady);}
+            try {commandGuard.Start(EnhancementRoute,config.apps.Where(t=>t.enhanced),recover);commandGuard.Allow(healthy && enhancementReady);commandBlockReason="";}
             catch(Exception error) {commandGuard.SetFailure(error.Message);throw;}
+            finally {SystemPolicy.KernelFilteringReady=commandGuard.Live;}
         }
+        void StopCommandGuard() {try {commandGuard.Stop();} finally {SystemPolicy.KernelFilteringReady=commandGuard.Live;}}
         void Emit(object message) { lock(output) { Console.WriteLine(Data.Json().Serialize(message)); Console.Out.Flush(); } }
         void Log(string level, string message) {
             object entry = new { time = DateTimeOffset.Now.ToString("o"), level = level, message = message };
@@ -82,6 +85,7 @@ namespace IpGuard {
         public object Snapshot() {
             lock(state) return new {
                 egress = config.egress,
+                networkPolicy=networkPolicy,
                 enhancementReady=enhancementReady,enhancementReason=enhancementReason,enhancementPhase=enhancementPhase,
                 driver=commandGuard.Status(config.commandProtection),commandBlockId=commandBlockId,commandBlockReason=commandBlockReason,commandBlockAppId=commandBlockAppId,
                 online = true,
@@ -118,13 +122,16 @@ namespace IpGuard {
             }
             if(changed) { Log("warning", why); Publish(); }
         }
+        void StopEnhancedTargets() {
+            lock(state) {
+                commandGuard.Allow(false);
+                foreach(Target target in config.apps.Where(t=>t.enabled && t.enhanced)) {StopTarget(target.id);SystemPolicy.Block(target,true);}
+            }
+        }
         void TripEnhanced(string why) {
             lock(state) {
                 if(commandBlockReason==why) return;
-                commandGuard.Allow(false);
-                foreach(Target target in config.apps.Where(t=>t.enabled && t.enhanced)) {
-                    StopTarget(target.id);SystemPolicy.Block(target,true);
-                }
+                StopEnhancedTargets();
                 commandBlockId=Guid.NewGuid().ToString("D");commandBlockReason=why;
                 commandBlockAppId=config.apps.Where(t=>t.enabled && t.enhanced).Select(t=>t.id).FirstOrDefault() ?? "";
                 Log("warning","增强过滤失效，已停止增强会话 · "+why);Publish();
@@ -235,7 +242,7 @@ namespace IpGuard {
             if(previous.enabled) { RequireClosed(next);SystemPolicy.FirewallHealthy(); }
             List<Target> apps=config.apps.Select(t=>t.id==previous.id ? next : t).ToList();
             bool installing=false;
-            if(config.commandProtection) commandGuard.Stop();
+            if(config.commandProtection) StopCommandGuard();
             try {
                 if(previous.enabled) {
                     SystemPolicy.Block(previous,true);StopTarget(previous.id);
@@ -269,7 +276,7 @@ namespace IpGuard {
         }
         void Protect(Target t, bool enabled) {
             lock(state) {
-            if(t.enhanced) {RequireCommandChangesClosed(t.id);StopTarget(t.id);if(config.commandProtection) commandGuard.Stop();}
+            if(t.enhanced) {RequireCommandChangesClosed(t.id);StopTarget(t.id);if(config.commandProtection) StopCommandGuard();}
             bool canUseOtherModel=ClaudeCodeScope.IsCli(t) && t.apiScope!="claude" && !t.enhanced;
             if(enabled && !config.rulesLocked && !canUseOtherModel) throw new Exception("请先锁定允许的公网 IPv4，再启用程序防护。");
             SystemPolicy.RequireAdmin(); StopTarget(t.id);
@@ -314,11 +321,27 @@ namespace IpGuard {
                 }
                 if(action=="proxy:changed") {Observe("上游代理发生变化，正在复核出口",true);Check();return Snapshot();}
                 SystemPolicy.RequireAdmin();
-                if(action=="kernel:install") {
+                if(action=="network:apply") {
+                    var next=Data.Json().Deserialize<NetworkPolicyConfig>(Data.Json().Serialize(input["policy"]));
+                    next.Validate(SystemPolicy.EnhancedProxyPort);
+                    var previous=networkPolicy;
+                    bool changed=!previous.localPorts.SequenceEqual(next.localPorts);
+                    bool reload=config.commandProtection && (changed || !commandGuard.Live);
+                    enhancementReady=false;enhancementPhase="checking";enhancementReason="正在应用拦截策略";
+                    if(reload) {StopEnhancedTargets();StopCommandGuard();}
+                    networkPolicy=next;SystemPolicy.LocalDevPorts=next.localPorts;
+                    try {if(reload) LoadCommandGuard(true);}
+                    catch {networkPolicy=previous;SystemPolicy.LocalDevPorts=previous.localPorts;throw;}
+                    Log("info","全局拦截策略已应用 · "+next.revision);
+                } else if(action=="network:invalidate") {
+                    string message=input["reason"] as string;
+                    if(String.IsNullOrWhiteSpace(message) || message.Length>300) throw new Exception("策略冲突原因无效。");
+                    enhancementReady=false;enhancementPhase="failed";enhancementReason=message;TripEnhanced(message);
+                } else if(action=="kernel:install") {
                     commandGuard.Install();Log("info","命令进程树驱动已安装，尚未加载");
                 } else if(action=="kernel:repair") {
                     TripEnhanced("命令防护正在恢复，增强会话已停止");
-                    commandGuard.Stop();LoadCommandGuard(true);Log("info","命令进程树防护已恢复");Check();
+                    StopCommandGuard();LoadCommandGuard(true);Log("info","命令进程树防护已恢复");Check();
                 } else if(action == "egress:pause") {
                     PauseNetwork("固定出口正在重启，已暂停联网","checking");
                 } else if(action == "egress:set") {
@@ -385,7 +408,7 @@ namespace IpGuard {
                         if(enabled && enhancementPolicy==null) throw new Exception("通用代理通道尚未就绪。");
                         if(sessions.Any(s=>!s.stopped && s.enhanced && s.appId!=t.id)) throw new Exception("请先停止其他增强会话，再调整过滤范围。");
                         StopTarget(t.id);RequireClosed(t);
-                        if(config.commandProtection) commandGuard.Stop();
+                        if(config.commandProtection) StopCommandGuard();
                         if(enabled) EgressPolicy.ValidateTarget(t);
                         t.enhanced=enabled;
                         config.commandProtection=config.apps.Any(a=>a.enabled && a.enhanced);
@@ -434,7 +457,7 @@ namespace IpGuard {
                     if(Monitor.TryEnter(actions)) {
                         try {
                             BlockPending();
-                            if(config.commandProtection) {string error=commandGuard.HealthError();if(error!="") TripEnhanced(error);}
+                            if(config.commandProtection) {string error=commandGuard.HealthError();if(error!="") {SystemPolicy.KernelFilteringReady=false;commandGuard.SetFailure(error);TripEnhanced(error);}}
                             if(DateTime.UtcNow >= nextCheck || Interlocked.CompareExchange(ref checkRequested,0,0)==1) {
                                 Check();
                             }
@@ -663,7 +686,7 @@ namespace IpGuard {
                 quit=true; probe.Stop(); commands.CompleteAdding(); Trip("守护程序已退出，受保护程序已结束");
                 lock(state) foreach(Session session in sessions.Where(s=>s.otherModel)) {session.stopped=true;Win32.TerminateJobObject(session.job,1);}
                 lock(actions) BlockPending();
-                if(config.commandProtection) lock(state) {try {commandGuard.Stop();} catch(Exception error) {Log("error","命令防护退出未完成，自动恢复已准备 · "+error.Message);}}
+                if(config.commandProtection) lock(state) {try {StopCommandGuard();} catch(Exception error) {Log("error","命令防护退出未完成，自动恢复已准备 · "+error.Message);}}
                 NetworkChange.NetworkAddressChanged -= NetworkChanged; NetworkChange.NetworkAvailabilityChanged -= AvailabilityChanged; SystemEvents.PowerModeChanged -= PowerChanged;
                 wifi.Dispose();
             }

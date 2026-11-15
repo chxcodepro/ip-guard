@@ -15,6 +15,8 @@ import type { ClaudeIPv4 } from "./claude-ip.ts";
 import { coreConfiguration, snapshotV2rayNode } from "./egress-config.ts";
 import { guardDataDirectory } from "./guard-data.ts";
 import { nativePath } from "./guardian.ts";
+import { acceptHttpProxy } from "./http-proxy.ts";
+import type { NetworkPolicies } from "./network-policies.ts";
 
 const profileSchema = z.object({
   id: z.uuid(),
@@ -52,9 +54,25 @@ export class FixedEgress {
   private allowed = false;
   private stopping = false;
   private initialized: Promise<void> | undefined;
+  private readonly networkPolicies: NetworkPolicies;
+  private revision = 0;
+  get forwardingAllowed() {
+    return (
+      this.allowed &&
+      !this.networkPolicies.error &&
+      !this.networkPolicies.applying &&
+      this.networkPolicies.confirmed
+    );
+  }
+  policyChanged() {
+    this.revision++;
+    for (const socket of this.sockets) socket.destroy();
+    this.sockets.clear();
+  }
 
-  constructor(claude: ClaudeIPv4) {
+  constructor(claude: ClaudeIPv4, networkPolicies: NetworkPolicies) {
     this.claude = claude;
+    this.networkPolicies = networkPolicies;
   }
 
   initialize(): Promise<void> {
@@ -151,27 +169,22 @@ export class FixedEgress {
       }
       if (!listening || this.state.phase === "failed") throw new Error("固定出口核心未能就绪");
       const server = createServer((client) => {
-        if (!this.allowed || this.state.phase !== "ready") {
-          client.destroy();
-          return;
-        }
-        const upstream = createConnection({ host: "127.0.0.1", port: backendPort });
-        this.sockets.add(client);
-        this.sockets.add(upstream);
-        const close = () => {
-          client.destroy();
-          upstream.destroy();
-          this.sockets.delete(client);
-          this.sockets.delete(upstream);
-        };
-        client.on("error", close);
-        upstream.on("error", close);
-        client.on("close", close);
-        upstream.on("close", close);
-        client.pipe(upstream).pipe(client);
+        const revision = this.revision;
+        acceptHttpProxy(client, {
+          sockets: this.sockets,
+          allowed: () =>
+            revision === this.revision && this.forwardingAllowed && this.state.phase === "ready",
+          connect: (target) =>
+            this.networkPolicies.connect(
+              { protocol: "http", host: "127.0.0.1", port: backendPort },
+              target,
+            ),
+        });
       });
       this.server = server;
       const port = await listen(server, policy.port);
+      this.networkPolicies.reserve("fixed", [backendPort, port]);
+      if (this.networkPolicies.error) throw new Error(this.networkPolicies.error);
       server.on("error", () => this.fail("固定出口代理异常，已保持断网"));
       await this.claude.useFixedProxy(`http://127.0.0.1:${backendPort}`);
       this.state = { ...this.state, phase: "ready", error: "" };
@@ -192,9 +205,11 @@ export class FixedEgress {
   }
 
   private async closeResources() {
+    this.revision++;
     this.probeAddress = "";
     this.stopping = true;
     this.setAllowed(false);
+    this.networkPolicies.reserve("fixed", []);
     const server = this.server;
     this.server = undefined;
     if (server?.listening) await new Promise<void>((resolve) => server.close(() => resolve()));

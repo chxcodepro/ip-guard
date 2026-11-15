@@ -7,7 +7,7 @@ import { createInterface } from "node:readline";
 import { app } from "electron";
 import { z } from "zod";
 
-import type { Snapshot } from "@ip-guard/electron";
+import type { Snapshot, KernelNetworkPolicy } from "@ip-guard/electron";
 import {
   ipv4SourceUrlSchema,
   nativeProtocol,
@@ -49,6 +49,7 @@ export class NativeCommandError extends Error {
 }
 
 export class Guardian extends EventEmitter {
+  networkPolicy: KernelNetworkPolicy | undefined;
   enhancementPolicy: import("@ip-guard/electron").EgressPolicy | undefined;
   private readonly claude: ClaudeIPv4;
   private ready: Promise<void> = Promise.resolve();
@@ -120,6 +121,7 @@ export class Guardian extends EventEmitter {
               protocol: nativeProtocol,
               executable: process.execPath,
               enhancementPolicy: this.enhancementPolicy,
+              networkPolicy: this.networkPolicy,
             });
             return;
           }

@@ -2,7 +2,7 @@ import path from "node:path";
 
 import { app, BrowserWindow, dialog, Menu, nativeImage, Tray } from "electron";
 
-import { rendererOrigin } from "@ip-guard/electron";
+import { rendererOrigin, claudeIpv4Endpoint } from "@ip-guard/electron";
 
 import { BrowserBridge } from "#src/main/browser-bridge.ts";
 import { notifyBrowserRecovery } from "#src/main/browser-recovery.ts";
@@ -12,6 +12,7 @@ import { defaultApiOrigin } from "#src/main/config.ts";
 import { FixedEgress } from "#src/main/fixed-egress.ts";
 import { Guardian } from "#src/main/guardian.ts";
 import { setupIpc } from "#src/main/ipc.ts";
+import { NetworkPolicies } from "#src/main/network-policies.ts";
 import { ProtectionAlerts } from "#src/main/protection-alerts.ts";
 import { ProxyEnhancement } from "#src/main/proxy-enhancement.ts";
 import { parseHttpOrigin, parseLoopbackOrigin } from "#src/main/renderer-route.ts";
@@ -45,8 +46,9 @@ if (apiOrigin === null) {
 
 const claude = new ClaudeIPv4();
 const guardian = new Guardian(claude);
-const fixedEgress = new FixedEgress(claude);
-const proxyEnhancement = new ProxyEnhancement();
+const networkPolicies = new NetworkPolicies();
+const fixedEgress = new FixedEgress(claude, networkPolicies);
+const proxyEnhancement = new ProxyEnhancement(networkPolicies);
 const coffee = new CoffeeDiagnostics(claude);
 const protectionAlerts = new ProtectionAlerts(guardian, () => {
   const [win] = BrowserWindow.getAllWindows();
@@ -80,9 +82,11 @@ const open = () =>
   });
 
 const start = async () => {
+  await networkPolicies.initialize();
   await fixedEgress.initialize();
   await proxyEnhancement.initialize();
   guardian.enhancementPolicy = proxyEnhancement.policy;
+  guardian.networkPolicy = networkPolicies.kernelPolicy;
   setupIpc(
     devOrigin,
     guardian,
@@ -92,12 +96,25 @@ const start = async () => {
     fixedEgress,
     proxyEnhancement,
     browserBridge,
+    networkPolicies,
   );
   let proxySelected = false;
   let proxyRechecking = false;
   let routeDeclined = false;
+  let policyConflict = "";
   const updateProxyCore = async () => {
     let snapshot = guardian.snapshot;
+    if (snapshot) networkPolicies.observeKernel(snapshot.networkPolicy.revision);
+    proxyEnhancement.setProbeSource(snapshot?.settings.ipv4Url ?? claudeIpv4Endpoint);
+    const conflict =
+      networkPolicies.error ||
+      (snapshot?.online && !networkPolicies.applying && !networkPolicies.confirmed
+        ? "策略尚未获得原生确认，请重新应用。"
+        : "");
+    if (snapshot?.online && conflict && conflict !== policyConflict) {
+      policyConflict = conflict;
+      await guardian.request("network:invalidate", { reason: conflict });
+    } else if (!conflict) policyConflict = "";
     const needed = Boolean(snapshot?.apps.some((app) => app.enabled && app.enhanced));
     if (needed && !snapshot?.egress && proxyEnhancement.needsApproval && !routeDeclined) {
       const answer = await dialog.showMessageBox({
@@ -119,27 +136,54 @@ const start = async () => {
       !snapshot?.egress && proxyEnhancement.routeActive && (needed || proxyEnhancement.routeHeld);
     if (snapshot && (!snapshot.ready || !snapshot.rulesLocked))
       proxyEnhancement.exit.invalidate("等待基础 IPv4 校验通过后复核增强出口");
-    if (snapshot?.ready && needed && (snapshot.egress || proxyEnhancement.routeActive))
+    if (
+      !networkPolicies.applying &&
+      snapshot?.ready &&
+      needed &&
+      (snapshot.egress || proxyEnhancement.routeActive)
+    )
       void proxyEnhancement.exit
         .check(
           snapshot.settings.expectedIps,
           snapshot.egress ? fixedEgress.probeAddress : proxyEnhancement.probeAddress,
         )
         .catch((error) => console.error("增强出口复核", error));
-    proxyEnhancement.setAllowed(Boolean(snapshot?.ready) && !proxyRechecking && !snapshot?.egress);
+    const enforcerReady = !needed || Boolean(snapshot?.driver.ready);
+    proxyEnhancement.setAllowed(
+      Boolean(snapshot?.ready) && enforcerReady && !proxyRechecking && !snapshot?.egress,
+    );
     fixedEgress.setAllowed(
       Boolean(snapshot?.egress) &&
         Boolean(snapshot?.ready) &&
+        enforcerReady &&
         (!snapshot?.apps.some((target) => target.enabled && target.enhanced) ||
           proxyEnhancement.exit.ready),
     );
     if (snapshot?.online) {
-      const routeMissing = needed && !snapshot.egress && !proxyEnhancement.routeActive;
-      const ready = snapshot.ready && !routeMissing && proxyEnhancement.exit.ready;
-      const reason = routeMissing
-        ? proxyEnhancement.state.error || "等待确认 Claude 专用代理通道"
-        : proxyEnhancement.exit.state.reason;
-      const phase = routeMissing ? "failed" : proxyEnhancement.exit.state.phase;
+      const routeMissing =
+        Boolean(conflict) || (needed && !snapshot.egress && !proxyEnhancement.routeActive);
+      const ready =
+        !networkPolicies.applying &&
+        enforcerReady &&
+        snapshot.ready &&
+        !routeMissing &&
+        proxyEnhancement.exit.ready;
+      const reason = networkPolicies.applying
+        ? "正在应用拦截策略"
+        : routeMissing
+          ? conflict || proxyEnhancement.state.error || "等待确认 Claude 专用代理通道"
+          : !enforcerReady
+            ? snapshot.driver.error || "等待内核过滤配置就绪"
+            : proxyEnhancement.exit.state.reason;
+      const phase = networkPolicies.applying
+        ? "checking"
+        : routeMissing
+          ? "failed"
+          : !enforcerReady
+            ? snapshot.driver.error
+              ? "failed"
+              : "checking"
+            : proxyEnhancement.exit.state.phase;
       if (
         snapshot.enhancementReady !== ready ||
         snapshot.enhancementReason !== reason ||

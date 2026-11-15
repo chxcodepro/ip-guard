@@ -15,6 +15,8 @@ namespace IpGuard {
     public static class SystemPolicy {
         public static int FixedProxyPort;
         public static int EnhancedProxyPort;
+        public static bool KernelFilteringReady;
+        public static int[] LocalDevPorts=new int[0];
         public static readonly string Sid = WindowsIdentity.GetCurrent().User.Value;
         public static readonly string Owner = "IPGuard." + Sid;
         public static readonly string PipeName = "IPGuard-" + Sid;
@@ -100,7 +102,8 @@ namespace IpGuard {
         }
         public static void Block(Target app, bool blocked) {
             RequireAdmin();
-            ConnectionPolicy.Block(app,blocked,app.enhanced ? EnhancedProxyPort : FixedProxyPort);
+            // The confirmed kernel policy owns enhanced roots and their children, including local-service exceptions.
+            ConnectionPolicy.Block(app,blocked,app.enhanced && KernelFilteringReady ? 0 : app.enhanced ? EnhancedProxyPort : FixedProxyPort);
             // Deployed WFAS rules are retired only after the replacement policy succeeds.
             RemoveRules(Firewall(),app,"out","in","v6out","v6in");
         }

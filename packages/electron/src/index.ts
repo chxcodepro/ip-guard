@@ -16,6 +16,26 @@ import { extensionVersionSchema } from "./extension-version.ts";
 import { egressPolicySchema, egressStateSchema } from "./fixed-egress.ts";
 import { allowedIpsSchema, ipv4Attempts } from "./ipv4-policy.ts";
 import { claudeIpv4Endpoint, ipv4SourceUrlSchema } from "./ipv4-source.ts";
+import {
+  networkPolicySchema,
+  networkPolicyStateSchema,
+  kernelNetworkPolicySchema,
+} from "./network-policy.ts";
+export {
+  initialNetworkPolicy,
+  networkPolicySchema,
+  networkPolicyStateSchema,
+  networkRuleSchema,
+  networkHost,
+  networkAction,
+  localPolicyPorts,
+} from "./network-policy.ts";
+export type {
+  NetworkPolicy,
+  NetworkRule,
+  NetworkPolicyState,
+  KernelNetworkPolicy,
+} from "./network-policy.ts";
 export {
   claudeIpv4Endpoint,
   ipv4Sources,
@@ -38,8 +58,8 @@ export { programProtectionStatus } from "./program-protection-status.ts";
 export { extensionVersionSchema, isNewerExtensionVersion } from "./extension-version.ts";
 export { claudeDesktopFamilies, isClaudeDesktopPath } from "./claude-desktop.ts";
 
-export const nativeVersion = "0.12.3";
-export const nativeProtocol = 19;
+export const nativeVersion = "0.12.4";
+export const nativeProtocol = 20;
 export const browserExtensionId = "blmgamidelconfabgilaacbkokomegep";
 export const browserHostName = "com.ipguard.browser";
 export const browserStateSchema = z
@@ -189,6 +209,7 @@ export const initialStartupStatus = {
   message: "等待检查启动项",
 } as const;
 export const snapshotSchema = z.object({
+  networkPolicy: kernelNetworkPolicySchema,
   enhancementReady: z.boolean().default(false),
   enhancementReason: z.string().default("等待增强出口复核"),
   enhancementPhase: z.enum(["idle", "checking", "passed", "blocked", "failed"]).default("idle"),
@@ -227,6 +248,8 @@ export const snapshotSchema = z.object({
   logs: z.array(logSchema),
 });
 export const commandSchema = z.discriminatedUnion("action", [
+  z.object({ action: z.literal("network:status") }),
+  z.object({ action: z.literal("network:save"), settings: networkPolicySchema }),
   z.object({ action: z.literal("extension:setup") }),
   z.object({ action: z.literal("extension:status") }),
   z.object({ action: z.literal("proxy:status") }),
@@ -277,6 +300,7 @@ export type ProtectedApp = z.infer<typeof appSchema>;
 export type Snapshot = z.infer<typeof snapshotSchema>;
 export type Command = z.infer<typeof commandSchema>;
 export const replySchema = z.object({
+  networkPolicy: networkPolicyStateSchema.optional(),
   extension: extensionStatusSchema.optional(),
   proxyEnhancement: proxyEnhancementStateSchema.optional(),
   egress: egressStateSchema.optional(),

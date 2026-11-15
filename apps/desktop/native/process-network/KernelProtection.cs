@@ -9,6 +9,7 @@ namespace IpGuard.ProcessNetwork {
     public sealed class KernelStatus {
         public bool installed,loaded,enabled,ready,supported;
         public string phase="not_installed",error="",version="Fort 3.20.9 / ABI 65";
+        public int[] localPorts=new int[0];
     }
     internal sealed class KernelProtection {
         FortDevice device;
@@ -20,16 +21,20 @@ namespace IpGuard.ProcessNetwork {
         volatile string failure="";
         bool supported;
         bool starting;
+        int[] activeLocalPorts=new int[0];
         public KernelProtection(Action<bool> setGate) {
             this.setGate=setGate;
             try {FortEnvironment.ReadPlatform().RequirePlatform();supported=true;} catch(Exception error) {failure=error.GetBaseException().Message;}
         }
-        public bool Live {get {return device!=null && controller!=null && (controller.Phase==ControllerPhase.Ready || controller.Phase==ControllerPhase.Paused);}}
+        public bool Live {get {return failure=="" && (runtime==null || runtime.Error=="") && device!=null && controller!=null && (controller.Phase==ControllerPhase.Ready || controller.Phase==ControllerPhase.Paused);}}
         public KernelStatus Status(bool enabled) {
-            var result=new KernelStatus {enabled=enabled,supported=supported,ready=Live,error=failure};
-            try {var record=OwnedDriverRegistration.Read();if(record!=null) {result.installed=true;result.loaded=record.Validate(false)==4;if(record.RecoveryPending && !Live && result.error=="") result.error="驱动需要恢复，请点击恢复后重试。";}}
+            var result=new KernelStatus {enabled=enabled,supported=supported,ready=Live,error=failure,localPorts=Live ? activeLocalPorts : new int[0]};
+            if(result.error=="" && runtime!=null) result.error=runtime.Error;
+            try {var record=OwnedDriverRegistration.Read();if(record!=null) {result.installed=true;result.loaded=record.Validate(false)==4;if(record.RecoveryPending && result.error=="") result.error="驱动需要恢复，请点击恢复后重试。";}}
             catch(Exception error) {result.error=error.GetBaseException().Message;}
-            result.phase=result.error!="" ? "failed" : starting ? "starting" : Live ? "ready" : result.installed ? "disabled" : "not_installed";
+            result.ready=Live && result.loaded && result.error=="";
+            if(!result.ready) result.localPorts=new int[0];
+            result.phase=result.error!="" ? "failed" : starting ? "starting" : result.ready ? "ready" : result.installed ? "disabled" : "not_installed";
             return result;
         }
         public void Install() {OwnedDriverRegistration.Install();failure="";}
@@ -62,7 +67,7 @@ namespace IpGuard.ProcessNetwork {
             FortEnvironment.ReadPlatform().RequirePlatform();
             if(egress==null) throw new Exception("请先启用固定出口。");
             string[] paths=targets.Where(t=>t.enabled).Select(t=>{EgressPolicy.ValidateTarget(t);return ProcessTreeMetadata.CanonicalPath(t.path);}).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
-            var policy=new FortPolicy(egress,paths);policy.Configuration();
+            var policy=new FortPolicy(egress,paths,SystemPolicy.LocalDevPorts);policy.Configuration();
             var record=OwnedDriverRegistration.Read();if(record==null) throw new Exception("请先安装命令防护驱动。");
             if(record.RecoveryPending) {
                 if(!recover) throw new Exception("命令防护已进入恢复，请在设置中确认恢复后重新加载。");
@@ -79,7 +84,7 @@ namespace IpGuard.ProcessNetwork {
                 jobs=new ProtectedJobs(runtime.WriteJobs);
                 controller=new ProcessNetworkController(device,policy,jobs,setGate);
                 roots.Clear();foreach(string path in paths) roots.Add(path);
-                failure="";runtime.Ready();
+                activeLocalPorts=policy.LocalPorts;failure="";runtime.Ready();
             } catch(Exception error) {
                 failure=error.Message;
                 if(acquired==null) throw;
@@ -102,6 +107,7 @@ namespace IpGuard.ProcessNetwork {
             }
         }
         public void RequireRoot(string path) {
+            string issue=HealthError();if(issue!="") throw new Exception(issue);
             if(!Live) throw new Exception(failure!="" ? failure : "命令进程树防护未就绪。");
             if(!roots.Contains(ProcessTreeMetadata.CanonicalPath(path))) throw new Exception("程序真实路径已变化，请关闭受控程序并重新加载命令防护。");
         }

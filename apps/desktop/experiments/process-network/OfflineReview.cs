@@ -178,7 +178,7 @@ namespace IpGuard.ProcessNetwork {
         public static int Main(string[] args) {
             if(args.Length!=1 || args[0]!="--self-check") {Console.WriteLine("Offline Fort adapter. --self-check uses memory only; no driver or service access.");return 2;}
             try {
-                ProtocolCases();StateCases();RecoveryCases();BrowserRetirementCases();ModelCases();RetiredModelTestCases();EnhancementCases();ProxySettingsCases();ProbeTimingCases();Ipv4SourceCases();
+                ProtocolCases();StateCases();RecoveryCases();BrowserRetirementCases();ModelCases();RetiredModelTestCases();EnhancementCases();ProxySettingsCases();ProbeTimingCases();Ipv4SourceCases();LocalServiceCases();
                 Check(StartupPolicy.MissingTask(new FileNotFoundException()),"missing task mapped to a .NET file exception remains a missing-task result");
                 Check(StartupPolicy.MissingTask(new COMException("missing",unchecked((int)0x80070002))),"raw COM missing-task HRESULT remains supported");
                 Check(!StartupPolicy.MissingTask(new UnauthorizedAccessException()),"scheduler access denial stays a visible failure");
@@ -195,6 +195,17 @@ namespace IpGuard.ProcessNetwork {
                 Console.WriteLine("PASS: "+assertions+" offline assertions. No driver loaded or opened.");return 0;
             }
             catch(Exception error) {Console.Error.WriteLine(error);return 1;}
+        }
+        static void LocalServiceCases() {
+            // Fort v3.20.9: LIST_OR=14, AREA_LOCALHOST=1, local-port=3, remote-port=1; no IP-version restriction on loopback branches.
+            byte[] config=new FortPolicy(Egress(),new[] {@"C:\apps\claude.exe"},new[] {5173}).Configuration().CopyPayload();
+            Check(config.Length==284,"one loopback service adds exactly two local TCP branches");
+            string rule=Hex(config.Skip(144).ToArray());
+            Check(rule.StartsWith("6120000070440000"),"proxy and local branches form a terminating OR whitelist");
+            Check(rule.Contains("781200004004000001000000300400000200000020040000010006000804000001003514"),"outgoing loopback TCP matches remote port 5173");
+            Check(rule.EndsWith("781200004004000001000000300400000100000020040000010006001804000001003514"),"incoming loopback TCP matches local port 5173");
+            Throws<ArgumentException>(()=>new FortPolicy(Egress(),new[] {@"C:\apps\claude.exe"},new[] {23456}),"the proxy port cannot become a local-service exception");
+            Throws<ArgumentException>(()=>new FortPolicy(Egress(),new[] {@"C:\apps\claude.exe"},new[] {0}),"invalid local ports fail before the driver is used");
         }
         static void Ipv4SourceCases() {
             Check(new Settings().ipv4Url=="https://claude.ai/cdn-cgi/trace","existing settings retain Claude as their default source");

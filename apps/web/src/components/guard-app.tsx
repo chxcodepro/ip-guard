@@ -63,12 +63,14 @@ import { CoffeePage } from "#src/components/coffee-page.tsx";
 import { CommandProtectionPanel } from "#src/components/command-protection-panel.tsx";
 import { EditAppDialog } from "#src/components/edit-app-dialog.tsx";
 import { FixedEgressPanel } from "#src/components/fixed-egress-panel.tsx";
+import { NetworkPolicyDialog } from "#src/components/network-policy-dialog.tsx";
 import { ProxyEnhancementPanel } from "#src/components/proxy-enhancement-panel.tsx";
 import { UpdatePanel } from "#src/components/update-panel.tsx";
 
 import "#src/guard.css";
 
 const initial: Snapshot = {
+  networkPolicy: { revision: "b0c7e969-e7e6-470f-9628-d9b82d8cc0ee", localPorts: [] },
   enhancementReady: false,
   enhancementReason: "等待增强出口复核",
   enhancementPhase: "idle",
@@ -590,6 +592,7 @@ export function GuardApp() {
   const [loading, setLoading] = useState(Boolean(window.desktop));
   const [failure, setFailure] = useState("");
   const [adding, setAdding] = useState(false);
+  const [policyEditing, setPolicyEditing] = useState(false);
   const [strictSetupOpen, setStrictSetupOpen] = useState(false);
   const [editing, setEditing] = useState<Snapshot["apps"][number] | null>(null);
   const [filter, setFilter] = useState("");
@@ -1190,6 +1193,15 @@ export function GuardApp() {
                 >
                   <div className="panel-heading">
                     <h2 id="connection-settings-title">连接与防护</h2>
+                    <button
+                      type="button"
+                      className="btn"
+                      disabled={!bridge || busy}
+                      onClick={() => setPolicyEditing(true)}
+                    >
+                      <ShieldCheck size={14} />
+                      拦截策略
+                    </button>
                   </div>
                   <RuleForm
                     ipsVisible={ipsVisible}
@@ -1359,6 +1371,14 @@ export function GuardApp() {
           </footer>
         </main>
       </div>
+      {policyEditing && (
+        <NetworkPolicyDialog
+          busy={busy}
+          available={available}
+          onClose={() => setPolicyEditing(false)}
+          onAction={invoke}
+        />
+      )}
       {editing && (
         <EditAppDialog
           key={editing.id}

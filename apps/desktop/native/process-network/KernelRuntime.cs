@@ -13,7 +13,7 @@ namespace IpGuard.ProcessNetwork {
         readonly string token=Guid.NewGuid().ToString("D");
         readonly OwnedDriverRegistration registration;
         Timer heartbeat;
-        public string Error="";
+        public volatile string Error="";
         static string Journal {get {return Path.Combine(OwnedDriverRegistration.Home,"sessions.json");}}
         static RegistryKey Open(bool write) {
             using(RegistryKey machine=RegistryKey.OpenBaseKey(RegistryHive.LocalMachine,RegistryView.Registry64)) {

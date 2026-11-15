@@ -20,11 +20,16 @@ namespace IpGuard.ProcessNetwork {
         public const uint Flags=(1U<<0)|(1U<<3)|(1U<<4)|(1U<<5)|(1U<<14);
         readonly string[] paths;
         readonly ushort port;
+        readonly ushort[] localPorts;
+        public int[] LocalPorts {get {return localPorts.Select(p=>(int)p).ToArray();}}
         static readonly Encoding Utf16=new UnicodeEncoding(false,false,true);
 
-        public FortPolicy(EgressPolicy egress,IEnumerable<string> roots) {
+        public FortPolicy(EgressPolicy egress,IEnumerable<string> roots,IEnumerable<int> localPorts=null) {
             if(egress==null || roots==null) throw new ArgumentNullException();
             egress.Validate();port=(ushort)egress.port;
+            int[] ports=(localPorts ?? new int[0]).Distinct().OrderBy(p=>p).ToArray();
+            if(ports.Length>64 || ports.Any(p=>p<1 || p>65535 || p==port)) throw new ArgumentException("本机开发端口无效或与代理端口冲突。");
+            this.localPorts=ports.Select(p=>(ushort)p).ToArray();
             paths=roots.Select(NormalizePath).Distinct(StringComparer.OrdinalIgnoreCase).OrderBy(p=>p,StringComparer.Ordinal).ToArray();
             if(paths.Length==0 || paths.Length>UInt16.MaxValue) throw new ArgumentException("请提供受控程序的完整 EXE 路径。");
         }
@@ -52,6 +57,19 @@ namespace IpGuard.ProcessNetwork {
                 Filter(1,Bytes(w=>{w.Write((byte)1);w.Write((byte)0);w.Write(port);}))
             };
             byte[] predicate=Filter(15,conditions.SelectMany(c=>c).ToArray());
+            if(localPorts.Length>0) {
+                var alternatives=new List<byte[]> {predicate};
+                foreach(bool inbound in new[] {false,true}) {
+                    byte[][] local={
+                        Filter(8,Bytes(w=>w.Write((ushort)1))),
+                        Filter(6,Bytes(w=>w.Write((ushort)(inbound ? 1 : 2)))),
+                        Filter(4,new byte[] {1,0,6}),
+                        Filter(inbound ? 3 : 1,Bytes(w=>{w.Write((byte)localPorts.Length);w.Write((byte)0);foreach(ushort p in localPorts) w.Write(p);}))
+                    };
+                    alternatives.Add(Filter(15,local.SelectMany(c=>c).ToArray()));
+                }
+                predicate=Filter(14,alternatives.SelectMany(c=>c).ToArray());
+            }
             // A non-match terminates as blocked; a matching IPv4 TCP proxy request remains allowed.
             return Bytes(w=>{w.Write((ushort)((1<<0)|(1<<5)|(1<<6)|(1<<13)));w.Write((byte)0);w.Write((byte)0);w.Write(predicate);});
         }
