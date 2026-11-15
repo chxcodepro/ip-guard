@@ -83,7 +83,9 @@ const confirm = async (message: string, detail = "") =>
     })
   ).response === 1;
 const policyState = () => {
-  const programs = guard.snapshot.apps.filter((a) => a.enabled).map((a) => a.name);
+  const programs = guard.snapshot.apps
+    .filter((a) => a.enabled && a.apiScope !== "other")
+    .map((a) => a.name);
   return {
     ...policies.status(guard.snapshot, guard.snapshot.ready),
     scope: "managed_proxy" as const,
@@ -164,7 +166,12 @@ async function action(command: Command): Promise<Reply> {
       break;
     case "session:scope":
       if (
-        !(await confirm("切换此入口的会话模型范围？", "将结束当前受管会话，新会话按所选范围处理。"))
+        !(await confirm(
+          "切换此入口的会话模型范围？",
+          command.scope === "other"
+            ? "将结束当前受管会话，其他模型的新会话沿用原网络。Claude 会话请保留受管范围。"
+            : "将结束当前受管会话，新会话按所选范围处理。",
+        ))
       )
         return { cancelled: true };
       await guard.setScope(command.id, command.scope);

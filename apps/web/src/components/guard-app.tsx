@@ -865,8 +865,8 @@ export function GuardApp() {
                         }}
                       >
                         <option value="auto">自动识别</option>
-                        <option value="claude">Claude</option>
-                        <option value="other">其他模型</option>
+                        <option value="claude">Claude · 受管代理</option>
+                        <option value="other">其他模型 · 原网络</option>
                       </select>
                     </label>
                   )}
