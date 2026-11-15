@@ -379,6 +379,7 @@ async function start() {
       throw new Error("Smoke verification is restricted to CI");
     await loaded;
     await new Promise((resolve) => setTimeout(resolve, 1200));
+    await window.webContents.executeJavaScript("document.fonts.ready.then(() => true)");
     const image = await window.webContents.capturePage();
     const text = await window.webContents.executeJavaScript("document.body.innerText");
     if (

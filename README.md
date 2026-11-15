@@ -24,7 +24,31 @@
 - **网络诊断**：展示 IPv6、网卡、DNS、时区、地区、连通性和风险属性。
 - **桌面集成**：浅色 / 深色 / 系统主题、托盘运行、登录自启动和 GitHub Releases 更新。
 
-## 下载与运行要求
+## Linux / macOS 开发预览
+
+[跨平台构建与下载](https://github.com/chxcodepro/ip-guard/actions?query=branch%3Acodex%2Fposix-desktop) · [预览版源码](https://github.com/chxcodepro/ip-guard/tree/codex/posix-desktop)
+
+打开成功的构建，在 **Artifacts** 下载对应平台包；下载构建附件需要登录 GitHub。Windows 正式版继续通过 Releases 分发。
+
+| 平台 | 构建包 |
+| --- | --- |
+| Linux x64 | `IP-Guard-linux-x64-preview`：deb、AppImage |
+| macOS Apple Silicon | `IP-Guard-macos-arm64-preview`：DMG、ZIP |
+| macOS Intel | `IP-Guard-macos-x64-preview`：DMG、ZIP |
+
+这批预览提供真实的受管启动与代理门禁：IP 锁定和重试、网络 / 网卡检测、暂停与恢复受管连接、程序和参数管理、登录自启动、托盘与深浅主题，以及 Chrome / Edge 网页防护通信。
+
+1. 安装或解压对应平台包，打开 IP Guard；先使用原来的代理工具和分流设置。
+2. 获取并锁定允许的 IPv4，添加 Claude Code；macOS 还可添加官方 Claude Desktop。
+3. 开启程序的受管启动。CLI 可点击「复制终端启动命令」，粘贴到原终端执行，后面继续追加原有 Claude 参数；从界面启动 CLI 会打开系统终端。
+4. 默认自动识别已知 Claude / DeepSeek 等模型。隐藏模型名称的中转可在程序行中手动选择「Claude」或「其他模型」，更改会结束该入口当前的受管会话。
+5. 网页防护点击「打开扩展文件夹」，再到 Chrome / Edge 加载其中的解压扩展；软件同时准备当前用户的 Native Messaging 通信入口。
+
+当前保护范围是**经过受管代理的连接**。直接打开原程序或执行原 `claude` 命令仍沿用原启动方式；系统级直连、UDP、完整进程树过滤与强制固定出口增强继续由后续原生后端完成。分流模式中的国内目标仍可能按原代理规则直连。严格防止本机原出口泄露，需要等待相应原生增强验收。
+
+预览包独立于稳定自动更新，更新时从构建页下载后手动替换。Linux 在 Ubuntu 22.04 x64、macOS 在 15 的 arm64 / x64 临时宿主验证；其他发行版和系统版本仍待验证。macOS 当前使用 ad-hoc 开发签名，Developer ID、公证和系统网络扩展授权另行配置，打开时可能出现系统批准提示。
+
+## Windows 下载与运行要求
 
 从 [Releases](https://github.com/chxcodepro/ip-guard/releases/latest) 获取安装文件：
 

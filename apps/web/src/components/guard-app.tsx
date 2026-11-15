@@ -34,6 +34,7 @@ import { useTheme } from "next-themes";
 import { useEffect, useRef, useState } from "react";
 import type { FormEvent, ReactNode } from "react";
 import { toast } from "sonner";
+import "@fontsource-variable/noto-sans-sc";
 
 import type {
   AppPreset,

@@ -33,7 +33,8 @@ body {
   margin: 0;
   background: var(--g-bg);
   color: var(--g-ink);
-  font-family: "Segoe UI", "Microsoft YaHei", system-ui, sans-serif;
+  font-family:
+    "Segoe UI", "Microsoft YaHei", "PingFang SC", "Noto Sans SC Variable", system-ui, sans-serif;
   font-size: 14px;
 }
 button,
@@ -67,7 +68,9 @@ button:active:not(:disabled) {
   transform: translateY(1px);
 }
 .mono {
-  font-family: "Cascadia Mono", "Consolas", monospace;
+  font-family:
+    "Cascadia Mono", "Consolas", "SFMono-Regular", Menlo, "DejaVu Sans Mono",
+    "Noto Sans SC Variable", monospace;
   font-variant-numeric: tabular-nums;
 }
 .muted,
@@ -1503,7 +1506,9 @@ textarea::placeholder {
   display: block;
 }
 .coffee-ipv6 .coffee-metric strong {
-  font-family: "Cascadia Mono", Consolas, monospace;
+  font-family:
+    "Cascadia Mono", Consolas, "SFMono-Regular", Menlo, "DejaVu Sans Mono", "Noto Sans SC Variable",
+    monospace;
   font-size: 13px;
 }
 .coffee-ipv6 .coffee-risk-marker {
@@ -1537,7 +1542,9 @@ textarea::placeholder {
   display: block;
 }
 .coffee-exits .coffee-metric strong {
-  font-family: "Cascadia Mono", Consolas, monospace;
+  font-family:
+    "Cascadia Mono", Consolas, "SFMono-Regular", Menlo, "DejaVu Sans Mono", "Noto Sans SC Variable",
+    monospace;
   font-size: 17px;
   margin-top: 10px;
 }

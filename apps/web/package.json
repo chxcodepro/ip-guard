@@ -13,6 +13,7 @@
     "test:e2e": "playwright test"
   },
   "dependencies": {
+    "@fontsource-variable/noto-sans-sc": "catalog:",
     "@ip-guard/electron": "workspace:*",
     "@ip-guard/ui": "workspace:*",
     "@tanstack/react-query": "catalog:",
