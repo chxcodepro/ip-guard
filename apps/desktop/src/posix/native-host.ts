@@ -66,7 +66,12 @@ process.stdin.on("data", (chunk: Buffer) => {
     lines.on("line", (line) => {
       try {
         const state = browserStateSchema.parse(JSON.parse(line));
-        send(state);
+        send({
+          ...state,
+          expectedIp: state.expectedIps.includes(state.currentIp)
+            ? state.currentIp
+            : (state.expectedIps[0] ?? ""),
+        });
         clearTimeout(heartbeat);
         heartbeat = setTimeout(offline, 3000);
       } catch {

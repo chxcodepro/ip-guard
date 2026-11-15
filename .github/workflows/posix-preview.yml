@@ -8,6 +8,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: posix-preview-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   package:
     strategy:

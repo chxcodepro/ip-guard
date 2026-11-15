@@ -303,9 +303,9 @@ export class PosixGuard extends EventEmitter<{ snapshot: [Snapshot]; identity: [
     return this.snapshot;
   }
   async add(target: ProtectedApp) {
-    if (this.data.apps.some((a) => a.path === target.path || a.id === target.id))
-      throw new Error("该程序已添加");
     const resolved = await executablePath(target.path);
+    if (this.data.apps.some((a) => a.path === resolved || a.id === target.id))
+      throw new Error("该程序已添加");
     if (!isPosixCli(resolved) && !resolved.includes("/Claude.app/Contents/MacOS/"))
       throw new Error("此开发版的受管启动支持 Claude Code 与 macOS Claude Desktop");
     await this.save({
@@ -350,6 +350,15 @@ export class PosixGuard extends EventEmitter<{ snapshot: [Snapshot]; identity: [
       enabled: autostart,
       state: autostart ? "ready" : "off",
       message: autostart ? "已配置登录启动" : "",
+    };
+    this.publish();
+  }
+  observeStartup(enabled: boolean, error = "") {
+    const missing = this.data.autostart && !enabled;
+    this.snapshot.startup = {
+      enabled: enabled || missing,
+      state: error || missing ? "error" : enabled ? "ready" : "off",
+      message: error || (missing ? "登录启动项未就绪，请重新开启" : ""),
     };
     this.publish();
   }

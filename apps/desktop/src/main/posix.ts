@@ -9,6 +9,7 @@ import {
   ipcMain,
   Menu,
   nativeImage,
+  Notification,
   session,
   shell,
   Tray,
@@ -29,7 +30,12 @@ import {
   preparePosixBroker,
   refreshLaunchers,
 } from "./posix-launch.ts";
-import { executablePath, isPosixCli, posixAutostart } from "./posix-platform.ts";
+import {
+  executablePath,
+  isPosixCli,
+  posixAutostart,
+  posixAutostartEnabled,
+} from "./posix-platform.ts";
 import { isTrustedUrl, parseLoopbackOrigin } from "./renderer-route.ts";
 import { serveRenderer } from "./renderer.ts";
 import { ApplicationUpdates } from "./updates.ts";
@@ -157,6 +163,11 @@ async function action(command: Command): Promise<Reply> {
         });
       else await posixAutostart(command.enabled, process.env.APPIMAGE || process.execPath);
       await guard.setAutostart(command.enabled);
+      guard.observeStartup(
+        process.platform === "darwin"
+          ? app.getLoginItemSettings().openAtLogin
+          : await posixAutostartEnabled(process.env.APPIMAGE || process.execPath),
+      );
       break;
     case "pick": {
       const result = await dialog.showOpenDialog({
@@ -258,10 +269,37 @@ async function action(command: Command): Promise<Reply> {
 async function start() {
   await policies.initialize();
   broker = await preparePosixBroker(guard, process.execPath, client);
-  guard.on("snapshot", (snapshot) => send(desktopChannels.update, snapshot));
+  let wasReady = false;
+  guard.on("snapshot", (snapshot) => {
+    send(desktopChannels.update, snapshot);
+    const finalState = !snapshot.checking && (snapshot.ready || snapshot.probe.phase === "failed");
+    if (
+      snapshot.running.length &&
+      wasReady !== snapshot.ready &&
+      finalState &&
+      Notification.isSupported()
+    ) {
+      const notification = new Notification({
+        title: snapshot.ready ? "受管连接已恢复" : "受管连接已暂停",
+        body: snapshot.ready ? "IPv4 已命中允许列表" : snapshot.reason,
+      });
+      notification.show();
+      if (snapshot.ready) setTimeout(() => notification.close(), 3000);
+    }
+    if (!snapshot.running.length || finalState) wasReady = snapshot.ready;
+  });
   coffee.on("update", (report) => send(desktopChannels.coffee, report));
   updates.on("update", (state) => send(desktopChannels.appUpdate, state));
   await guard.initialize();
+  try {
+    guard.observeStartup(
+      process.platform === "darwin"
+        ? app.getLoginItemSettings().openAtLogin
+        : await posixAutostartEnabled(process.env.APPIMAGE || process.execPath),
+    );
+  } catch (error) {
+    guard.observeStartup(false, error instanceof Error ? error.message : "登录启动项读取失败");
+  }
   await refreshLaunchers(guard, process.execPath, client);
   let pending = Promise.resolve();
   ipcMain.handle(desktopChannels.invoke, async (event, input: unknown) => {

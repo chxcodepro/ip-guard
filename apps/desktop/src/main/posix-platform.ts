@@ -25,6 +25,7 @@ export const posixBrowserSocketPath = () =>
   path.join(path.dirname(posixSocketPath()), "browser.sock");
 export const shellArgument = (value: string) => "'" + value.replaceAll("'", "'\\''") + "'";
 export function argumentWords(text: string): string[] {
+  if (text.includes("\0")) throw new Error("启动参数包含无效字符");
   const words: string[] = [];
   let word = "",
     quote = "",
@@ -152,26 +153,45 @@ export async function writePrivate(file: string, content: string) {
   await writeFile(temporary, content, { mode: 0o600 });
   await rename(temporary, file);
 }
-export async function posixAutostart(enabled: boolean, executable: string) {
-  if (process.platform === "darwin") throw new Error("macOS 登录启动由应用登录项管理");
-  const file = path.join(
+const autostartFile = () =>
+  path.join(
     process.env.XDG_CONFIG_HOME || path.join(os.homedir(), ".config"),
     "autostart/ip-guard.desktop",
   );
+function desktopExec(executable: string) {
+  if (!path.isAbsolute(executable) || /[\r\n\0]/u.test(executable)) throw new Error("启动路径无效");
+  return (
+    "Exec=" +
+    '"' +
+    executable
+      .replaceAll("\\", "\\\\\\\\")
+      .replaceAll('"', '\\"')
+      .replaceAll("`", "\\`")
+      .replaceAll("$", "\\$")
+      .replaceAll("%", "%%") +
+    '" --background'
+  );
+}
+export async function posixAutostartEnabled(executable: string) {
+  try {
+    const lines = (await readFile(autostartFile(), "utf8")).split(/\r?\n/u);
+    return (
+      lines.includes(desktopExec(executable)) &&
+      !lines.includes("Hidden=true") &&
+      !lines.includes("X-GNOME-Autostart-enabled=false")
+    );
+  } catch (error) {
+    if (error && typeof error === "object" && Reflect.get(error, "code") === "ENOENT") return false;
+    throw error;
+  }
+}
+export async function posixAutostart(enabled: boolean, executable: string) {
+  if (process.platform === "darwin") throw new Error("macOS 登录启动由应用登录项管理");
+  const file = autostartFile();
   if (enabled) {
-    if (/[\r\n\0]/u.test(executable)) throw new Error("启动路径无效");
-    const quoted =
-      '"' +
-      executable
-        .replaceAll("\\", "\\\\")
-        .replaceAll('"', '\\"')
-        .replaceAll("`", "\\`")
-        .replaceAll("$", "\\$")
-        .replaceAll("%", "%%") +
-      '"';
     await writePrivate(
       file,
-      `[Desktop Entry]\nType=Application\nName=IP Guard\nExec=${quoted} --background\nTerminal=false\nX-GNOME-Autostart-enabled=true\n`,
+      `[Desktop Entry]\nType=Application\nName=IP Guard\n${desktopExec(executable)}\nTerminal=false\nX-GNOME-Autostart-enabled=true\n`,
     );
   } else
     try {
