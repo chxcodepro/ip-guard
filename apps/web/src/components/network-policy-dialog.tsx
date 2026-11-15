@@ -123,7 +123,7 @@ export function NetworkPolicyDialog({
             <dl className="policy-facts">
               <div>
                 <dt>公网默认</dt>
-                <dd>专用代理</dd>
+                <dd>{state?.scope === "managed_proxy" ? "当前代理 / 网络" : "专用代理"}</dd>
               </div>
               <div>
                 <dt>其他本机端口</dt>

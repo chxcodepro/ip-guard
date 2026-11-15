@@ -31,7 +31,7 @@ class Probe extends EventEmitter<{ progress: [ProbeProgress] }> {
   async useSystemProxy() {
     this.route = "system";
   }
-  async check() {
+  async check(_source: string) {
     return {
       ip: this.ip,
       error: "",
@@ -149,6 +149,38 @@ describe.runIf(process.platform !== "win32")("POSIX managed sessions", () => {
       guard.stop();
       await new Promise<void>((resolve) => server.close(() => resolve()));
     }
+  });
+  it("discards a previous-source reply while locking a different IPv4 API", async () => {
+    class DelayedProbe extends Probe {
+      release: (() => void) | undefined;
+      override invalidate() {
+        this.release?.();
+        this.release = undefined;
+      }
+      override check(source: string) {
+        const value = {
+          ip: source.includes("ipify") ? "1.1.1.1" : "8.8.8.8",
+          error: "",
+          checkedAt: new Date().toISOString(),
+          adapter: "fixture",
+        };
+        if (source.includes("ipify")) return Promise.resolve(value);
+        return new Promise<typeof value>((resolve) => {
+          this.release = () => resolve(value);
+        });
+      }
+    }
+    const probe = new DelayedProbe();
+    guard = new PosixGuard(probe, new NetworkPolicies(), async () => "DIRECT");
+    await guard.initialize();
+    await guard.lock({
+      expectedIps: ["8.8.8.8"],
+      intervalSeconds: 60,
+      ipv4Url: "https://api.ipify.org/?format=json",
+    });
+    expect(guard.snapshot.settings.ipv4Url).toContain("ipify");
+    expect(guard.snapshot.currentIp).toBe("1.1.1.1");
+    expect(guard.snapshot.ready).toBe(false);
   });
   it.each([false, true])(
     "launches the real broker and client and cleans up its child (PTY=%s)",
