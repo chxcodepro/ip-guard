@@ -850,6 +850,25 @@ export function GuardApp() {
                       复制终端启动命令
                     </button>
                   )}
+                  {portable && target.isClaudeCode && (
+                    <label className="app-enhancement">
+                      <span>会话模型</span>
+                      <select
+                        aria-label={`${target.name} 会话模型范围`}
+                        value={target.apiScope}
+                        disabled={busy || !available}
+                        onChange={(event) => {
+                          const scope = event.target.value;
+                          if (scope === "auto" || scope === "claude" || scope === "other")
+                            void invoke({ action: "session:scope", id: target.id, scope });
+                        }}
+                      >
+                        <option value="auto">自动识别</option>
+                        <option value="claude">Claude</option>
+                        <option value="other">其他模型</option>
+                      </select>
+                    </label>
+                  )}
                   {(target.pathIssue || actionReason) && (
                     <div
                       className={`app-action-reason ${target.pathIssue ? "path-warning" : ""}`}

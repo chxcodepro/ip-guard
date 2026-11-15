@@ -288,6 +288,11 @@ export const commandSchema = z.discriminatedUnion("action", [
   z.object({ action: z.literal("presets") }),
   z.object({ action: z.literal("desktop:relocate"), id: z.uuid() }),
   z.object({ action: z.literal("adapter:set"), adapterId: z.string().max(256) }),
+  z.object({
+    action: z.literal("session:scope"),
+    id: z.uuid(),
+    scope: z.enum(["auto", "claude", "other"]),
+  }),
   z.object({ action: z.literal("ip:current"), sourceUrl: ipv4SourceUrlSchema }),
   z.object({ action: z.literal("claude:status") }),
   z.object({ action: z.literal("claude:stop") }),

@@ -42,11 +42,20 @@ const configurationSchema = z.object({
   proxy: proxySettingsSchema,
 });
 const file = () => path.join(posixDataDirectory(), "settings.json");
-type SessionRecord = { appId: string; close: () => void; server: Server; sockets: Set<Socket> };
+type SessionRecord = {
+  appId: string;
+  guarded: boolean;
+  close: () => void;
+  server: Server;
+  sockets: Set<Socket>;
+};
 interface PosixProbe {
   on(event: "progress", listener: (value: ProbeProgress) => void): unknown;
   check(source: string): Promise<Pick<ClaudeIPv4Result, "ip" | "error" | "checkedAt" | "adapter">>;
   stop(): void;
+  invalidate(): void;
+  useFixedProxy(address: string): Promise<void>;
+  useSystemProxy(): Promise<void>;
 }
 export class PosixGuard extends EventEmitter<{ snapshot: [Snapshot]; identity: [string] }> {
   readonly platform = process.platform === "darwin" ? "darwin" : "linux";
@@ -67,6 +76,7 @@ export class PosixGuard extends EventEmitter<{ snapshot: [Snapshot]; identity: [
   private timer: ReturnType<typeof setTimeout> | undefined;
   private monitor: ReturnType<typeof setInterval> | undefined;
   private network = "";
+  private epoch = 0;
   private sessions = new Map<string, SessionRecord>();
   readonly snapshot: Snapshot = {
     platform: this.platform,
@@ -137,6 +147,9 @@ export class PosixGuard extends EventEmitter<{ snapshot: [Snapshot]; identity: [
   get proxy() {
     return this.data.proxy;
   }
+  get sessionCount() {
+    return this.sessions.size;
+  }
   private publish() {
     this.snapshot.rulesLocked = this.data.locked;
     this.snapshot.settings = this.data.settings;
@@ -148,18 +161,10 @@ export class PosixGuard extends EventEmitter<{ snapshot: [Snapshot]; identity: [
       launcherPath: launcherPath(target.id),
     }));
     this.snapshot.running = [
-      ...new Set(
-        [...this.sessions.values()]
-          .filter((s) => this.data.apps.find((a) => a.id === s.appId)?.apiScope !== "other")
-          .map((s) => s.appId),
-      ),
+      ...new Set([...this.sessions.values()].filter((s) => s.guarded).map((s) => s.appId)),
     ];
     this.snapshot.otherModelRunning = [
-      ...new Set(
-        [...this.sessions.values()]
-          .filter((s) => this.data.apps.find((a) => a.id === s.appId)?.apiScope === "other")
-          .map((s) => s.appId),
-      ),
+      ...new Set([...this.sessions.values()].filter((s) => !s.guarded).map((s) => s.appId)),
     ];
     this.snapshot.networkPolicy = this.policies.kernelPolicy;
     this.policies.observeKernel(this.policies.record.revision);
@@ -192,7 +197,10 @@ export class PosixGuard extends EventEmitter<{ snapshot: [Snapshot]; identity: [
     }
     this.publish();
     this.emit("identity", String(process.getuid?.()));
-    if (!this.error) void this.check();
+    if (!this.error) {
+      await this.selectProbeRoute();
+      void this.check();
+    }
     this.monitor = setInterval(
       () =>
         void this.observeNetwork().catch((error) => {
@@ -224,11 +232,14 @@ export class PosixGuard extends EventEmitter<{ snapshot: [Snapshot]; identity: [
       ipv4: false,
       error: "",
     };
-    const route = await this.resolveProxy(this.data.settings.ipv4Url);
+    const route =
+      this.data.proxy.mode === "manual"
+        ? this.data.proxy.address
+        : await this.resolveProxy(this.data.settings.ipv4Url);
     const fingerprint = JSON.stringify([interfaces, route]);
     if (this.network && this.network !== fingerprint) {
       this.pause("网络发生变化，正在复核 IPv4");
-      void this.check();
+      void this.recheck();
     }
     this.network = fingerprint;
     this.publish();
@@ -250,12 +261,25 @@ export class PosixGuard extends EventEmitter<{ snapshot: [Snapshot]; identity: [
     });
     return this.checking;
   }
+  private async selectProbeRoute() {
+    if (this.data.proxy.mode === "manual") await this.probe.useFixedProxy(this.data.proxy.address);
+    else await this.probe.useSystemProxy();
+  }
+  private async recheck() {
+    this.epoch++;
+    this.probe.invalidate();
+    if (this.checking) await this.checking;
+    await this.selectProbeRoute();
+    return this.check();
+  }
   private async readIp() {
+    const epoch = this.epoch;
     this.snapshot.checking = true;
     this.snapshot.probe = { round: this.snapshot.probe.round + 1, attempt: 1, phase: "checking" };
     this.publish();
     try {
       const value = await this.probe.check(this.data.settings.ipv4Url);
+      if (epoch !== this.epoch) return this.snapshot;
       const before = this.snapshot.ready;
       this.snapshot.currentIp = value.ip;
       this.snapshot.lastChecked = value.checkedAt;
@@ -294,7 +318,7 @@ export class PosixGuard extends EventEmitter<{ snapshot: [Snapshot]; identity: [
     if (this.data.locked) throw new Error("请先取消锁定");
     this.pause("正在应用允许的 IPv4");
     await this.save({ ...this.data, settings: settingsSchema.parse(settings), locked: true });
-    return this.check();
+    return this.recheck();
   }
   async unlock() {
     this.stopSessions();
@@ -365,13 +389,32 @@ export class PosixGuard extends EventEmitter<{ snapshot: [Snapshot]; identity: [
   async setProxy(proxy: ProxySettings) {
     this.pause("代理来源已变化，正在复核");
     await this.save({ ...this.data, proxy });
-    await this.check();
+    await this.recheck();
   }
-  async createSession(id: string, close: () => void) {
+  async setScope(id: string, scope: ProtectedApp["apiScope"]) {
+    const target = this.target(id);
+    if (!isPosixCli(target.path)) throw new Error("仅 Claude Code 会话可设置模型范围");
+    this.stopSessions(id);
+    await this.save({
+      ...this.data,
+      apps: this.data.apps.map((a) => (a.id === id ? { ...a, apiScope: scope } : a)),
+    });
+  }
+  async createSession(
+    id: string,
+    close: () => void,
+    provider: "claude" | "other" | "unknown" = "unknown",
+  ) {
     const target = this.target(id);
     if (!target.enabled) throw new Error("请先开启受管启动");
-    await this.check();
-    if (!this.snapshot.ready) throw new Error(this.snapshot.reason);
+    const guarded =
+      !isPosixCli(target.path) ||
+      target.apiScope === "claude" ||
+      (target.apiScope === "auto" && provider !== "other");
+    if (guarded) {
+      await this.check();
+      if (!this.snapshot.ready) throw new Error(this.snapshot.reason);
+    }
     const resolved = await executablePath(target.path);
     if (resolved !== target.path) throw new Error("程序入口已更新，请重新添加");
     const sessionId = randomUUID(),
@@ -380,6 +423,7 @@ export class PosixGuard extends EventEmitter<{ snapshot: [Snapshot]; identity: [
       acceptHttpProxy(client, {
         sockets,
         allowed: () =>
+          guarded &&
           this.snapshot.online &&
           this.data.locked &&
           this.snapshot.ready &&
@@ -424,6 +468,7 @@ export class PosixGuard extends EventEmitter<{ snapshot: [Snapshot]; identity: [
     };
     this.sessions.set(sessionId, {
       appId: id,
+      guarded,
       server,
       sockets,
       close: () => {
@@ -433,13 +478,15 @@ export class PosixGuard extends EventEmitter<{ snapshot: [Snapshot]; identity: [
     });
     this.reservePorts();
     this.publish();
-    return {
+    const granted = {
       sessionId,
       target,
       args: argumentWords(target.arguments),
-      proxy: `http://127.0.0.1:${address.port}`,
       release,
     };
+    return guarded
+      ? { ...granted, scope: "guarded" as const, proxy: `http://127.0.0.1:${address.port}` }
+      : { ...granted, scope: "other" as const };
   }
   private reservePorts() {
     this.policies.reserve(
@@ -451,8 +498,7 @@ export class PosixGuard extends EventEmitter<{ snapshot: [Snapshot]; identity: [
     );
   }
   stopSessions(id?: string) {
-    for (const record of [...this.sessions.values()])
-      if (!id || record.appId === id) record.close();
+    for (const record of this.sessions.values()) if (!id || record.appId === id) record.close();
   }
   stop() {
     this.snapshot.online = false;

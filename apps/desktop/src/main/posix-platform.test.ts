@@ -5,6 +5,7 @@ import path from "node:path";
 import { describe, expect, it } from "vite-plus/test";
 import { vi } from "vite-plus/test";
 
+import { providerHint } from "../posix/provider.ts";
 import {
   argumentWords,
   isPosixCli,
@@ -14,6 +15,28 @@ import {
 } from "./posix-platform.ts";
 
 describe("POSIX launch arguments", () => {
+  it("distinguishes known DeepSeek sessions and keeps hidden gateway aliases protected", async () => {
+    const folder = await mkdtemp(path.join(os.tmpdir(), "ipguard-model-"));
+    try {
+      const env = { CLAUDE_CONFIG_DIR: folder, ANTHROPIC_BASE_URL: "https://api.deepseek.com" };
+      expect(await providerHint(["--model", "sonnet"], folder, env)).toBe("other");
+      expect(await providerHint(["--model", "claude-sonnet-4"], folder, env)).toBe("claude");
+      expect(
+        await providerHint(["--model", "deepseek-chat"], folder, {
+          CLAUDE_CONFIG_DIR: folder,
+          ANTHROPIC_BASE_URL: "http://127.0.0.1:1234",
+        }),
+      ).toBe("other");
+      expect(
+        await providerHint(["--model", "hidden-alias"], folder, {
+          CLAUDE_CONFIG_DIR: folder,
+          ANTHROPIC_BASE_URL: "http://127.0.0.1:1234",
+        }),
+      ).toBe("unknown");
+    } finally {
+      await rm(folder, { recursive: true, force: true });
+    }
+  });
   it("retains quoted empty values and passes shell operators as literal arguments", () => {
     expect(
       argumentWords(`--model 'claude-sonnet' --append-system-prompt "a b" '' a\\ b ; $(id)`),

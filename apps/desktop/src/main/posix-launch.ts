@@ -6,9 +6,11 @@ import path from "node:path";
 import { createInterface } from "node:readline";
 
 import { launchRequestSchema } from "../posix/protocol.ts";
+import { modelHint } from "../posix/provider.ts";
 import type { PosixGuard } from "./posix-guard.ts";
 import {
   isPosixCli,
+  argumentWords,
   posixDataDirectory,
   posixSocketPath,
   posixBrowserSocketPath,
@@ -64,7 +66,35 @@ export async function preparePosixBroker(
         try {
           const request = launchRequestSchema.parse(JSON.parse(line));
           if (!path.isAbsolute(request.cwd)) throw new Error("工作目录无效");
-          const record = await guard.createSession(request.id, () => connection.destroy());
+          const baseArgs = argumentWords(guard.target(request.id).arguments);
+          const args = [...baseArgs, ...request.args];
+          let provider = request.provider;
+          for (let index = 0; index < args.length; index++) {
+            const arg = args[index];
+            const model =
+              arg === "--model"
+                ? args[++index]
+                : arg?.startsWith("--model=")
+                  ? arg.slice(8)
+                  : undefined;
+            if (
+              model &&
+              modelHint(model) !== "unknown" &&
+              (modelHint(model) === "other" || /claude/iu.test(model) || provider === "unknown")
+            )
+              provider = modelHint(model);
+          }
+          if (
+            baseArgs.some(
+              (arg) => arg.startsWith("--settings") || arg.startsWith("--setting-sources"),
+            )
+          )
+            provider = "unknown";
+          const record = await guard.createSession(
+            request.id,
+            () => connection.destroy(),
+            provider,
+          );
           release = record.release;
           if (connection.destroyed) {
             release();
@@ -75,7 +105,9 @@ export async function preparePosixBroker(
               type: "launch",
               path: record.target.path,
               args: [...record.args, ...request.args],
-              proxy: record.proxy,
+              ...(record.scope === "guarded"
+                ? { scope: "guarded", proxy: record.proxy }
+                : { scope: "other" }),
               cli: isPosixCli(record.target.path),
             }) + "\n",
           );

@@ -16,7 +16,7 @@ import {
 } from "electron";
 
 import { commandSchema, desktopChannels, rendererOrigin } from "@ip-guard/electron";
-import type { Command, Reply } from "@ip-guard/electron";
+import type { Command, Reply, ClaudeState } from "@ip-guard/electron";
 
 import { BrowserBridge } from "./browser-bridge.ts";
 import { ClaudeIPv4 } from "./claude-ip.ts";
@@ -57,6 +57,13 @@ const client = app.isPackaged
   ? path.join(process.resourcesPath, "posix/client.cjs")
   : path.join(import.meta.dirname, "../posix/client.cjs");
 const browser = new BrowserBridge(guard, updates);
+const managedState = (): ClaudeState => ({
+  phase: guard.sessionCount ? "running" : "stopped",
+  count: guard.sessionCount,
+  canStop: Boolean(guard.sessionCount),
+  message: "受管会话",
+  checkedAt: new Date().toISOString(),
+});
 let quitting = false,
   tray: Tray | undefined;
 let window: BrowserWindow | undefined;
@@ -132,10 +139,10 @@ async function action(command: Command): Promise<Reply> {
       break;
     case "start": {
       const target = guard.target(command.id);
-      await guard.check();
-      if (!guard.snapshot.ready) throw new Error(guard.snapshot.reason);
       if (isPosixCli(target.path)) await openPosixTerminal(target.id);
       else {
+        await guard.check();
+        if (!guard.snapshot.ready) throw new Error(guard.snapshot.reason);
         const child = spawn(launcherPath(target.id), [], {
           stdio: "ignore",
           detached: true,
@@ -154,6 +161,13 @@ async function action(command: Command): Promise<Reply> {
       break;
     case "adapter:set":
       await guard.setAdapter(command.adapterId);
+      break;
+    case "session:scope":
+      if (
+        !(await confirm("切换此入口的会话模型范围？", "将结束当前受管会话，新会话按所选范围处理。"))
+      )
+        return { cancelled: true };
+      await guard.setScope(command.id, command.scope);
       break;
     case "autostart":
       if (process.platform === "darwin")
@@ -182,19 +196,11 @@ async function action(command: Command): Promise<Reply> {
     case "presets":
       return { presets: await (await import("./posix-platform.ts")).posixPresets() };
     case "claude:status":
-      return {
-        claude: {
-          phase: guard.snapshot.running.length ? "running" : "stopped",
-          count: guard.snapshot.running.length,
-          canStop: Boolean(guard.snapshot.running.length),
-          message: "受管会话",
-          checkedAt: new Date().toISOString(),
-        },
-      };
+      return { claude: managedState() };
     case "claude:stop":
       if (!(await confirm("结束所有受管 Claude 会话？"))) return { cancelled: true };
       guard.stopSessions();
-      break;
+      return { snapshot: guard.snapshot, claude: managedState() };
     case "network:status":
       return { networkPolicy: policyState() };
     case "network:save": {
@@ -251,7 +257,7 @@ async function action(command: Command): Promise<Reply> {
     case "update:download":
       return { appUpdate: await updates.download() };
     case "update:install":
-      await updates.install();
+      updates.install();
       return { appUpdate: updates.state };
     case "update:releases":
       await shell.openExternal("https://github.com/chxcodepro/ip-guard/releases");

@@ -23,6 +23,14 @@ vi.mock("electron", () => ({ app: { getPath: () => "/unused-ci-metadata" } }));
 
 class Probe extends EventEmitter<{ progress: [ProbeProgress] }> {
   ip = "8.8.8.8";
+  route = "system";
+  invalidate() {}
+  async useFixedProxy(address: string) {
+    this.route = address;
+  }
+  async useSystemProxy() {
+    this.route = "system";
+  }
   async check() {
     return {
       ip: this.ip,
@@ -93,6 +101,7 @@ describe.runIf(process.platform !== "win32")("POSIX managed sessions", () => {
     const session = await guard.createSession(id, () => {
       stopped = true;
     });
+    if (session.scope !== "guarded") throw new Error("Claude fixture must receive a guarded proxy");
     const port = Number(new URL(session.proxy).port);
     const exchange = () =>
       new Promise<string>((resolve, reject) => {
@@ -109,6 +118,10 @@ describe.runIf(process.platform !== "win32")("POSIX managed sessions", () => {
       });
     try {
       expect(await exchange()).toContain("local-preview");
+      await guard.setProxy({ mode: "manual", address: "http://127.0.0.1:10808" });
+      expect(probe.route).toBe("http://127.0.0.1:10808");
+      await guard.setProxy({ mode: "system" });
+      expect(probe.route).toBe("system");
       probe.ip = "1.1.1.1";
       await guard.check();
       expect(guard.snapshot.ready).toBe(false);
@@ -125,6 +138,13 @@ describe.runIf(process.platform !== "win32")("POSIX managed sessions", () => {
       expect(await exchange()).toContain("local-preview");
       session.release();
       expect(guard.snapshot.running).toEqual([]);
+      await guard.setScope(id, "auto");
+      await guard.unlock();
+      const other = await guard.createSession(id, () => {}, "other");
+      expect(other.scope).toBe("other");
+      expect(guard.snapshot.otherModelRunning).toContain(id);
+      await expect(guard.createSession(id, () => {}, "unknown")).rejects.toThrow();
+      other.release();
     } finally {
       guard.stop();
       await new Promise<void>((resolve) => server.close(() => resolve()));

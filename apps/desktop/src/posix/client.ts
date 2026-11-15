@@ -4,6 +4,7 @@ import { createInterface } from "node:readline";
 
 import { shellArgument } from "../main/posix-platform.ts";
 import { launchReplySchema, launchRequestSchema, proxyEnvironment } from "./protocol.ts";
+import { providerHint } from "./provider.ts";
 import { sessionArguments } from "./settings.ts";
 
 const [socketPath, id, ...extra] = process.argv.slice(2);
@@ -36,7 +37,13 @@ const stop = () => {
     }, 3000);
   }
 };
-connection.once("connect", () => connection.write(JSON.stringify(request) + "\n"));
+connection.once(
+  "connect",
+  () =>
+    void providerHint(request.args, request.cwd, process.env)
+      .then((provider) => connection.write(JSON.stringify({ ...request, provider }) + "\n"))
+      .catch(() => connection.destroy()),
+);
 connection.on("error", () => {
   console.error("IP Guard 尚未运行，请先打开桌面程序。");
   process.exitCode = 1;
@@ -55,16 +62,22 @@ createInterface({ input: connection }).on("line", (line) => {
       return;
     }
     if (child) throw new Error("重复的启动许可");
-    const env = { ...process.env, ...proxyEnvironment(message.proxy) };
-    const settings = await sessionArguments(message.args, request.cwd, env, message.cli);
+    const proxy = message.scope === "guarded" ? message.proxy : undefined;
+    const env = proxy ? { ...process.env, ...proxyEnvironment(proxy) } : process.env;
+    const settings = await sessionArguments(
+      message.args,
+      request.cwd,
+      env,
+      message.cli && Boolean(proxy),
+    );
     let executable = message.path,
       args = settings.args;
-    if (!message.cli)
+    if (!message.cli && proxy)
       args = [
         ...args.filter(
           (arg) => !arg.startsWith("--proxy-server=") && !arg.startsWith("--proxy-bypass-list="),
         ),
-        "--proxy-server=" + message.proxy,
+        "--proxy-server=" + proxy,
         "--proxy-bypass-list=<-loopback>",
       ];
     if (message.cli && process.stdin.isTTY) {

@@ -84,6 +84,10 @@ export class ClaudeIPv4 extends EventEmitter<{
   useSystemProxy() {
     return this.selectProxy(null);
   }
+  invalidate() {
+    this.route.abort();
+    this.route = new AbortController();
+  }
   latest(sourceUrl: string) {
     return this.results.get(sourceUrl);
   }
