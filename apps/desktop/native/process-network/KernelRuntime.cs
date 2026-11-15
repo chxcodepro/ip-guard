@@ -21,6 +21,13 @@ namespace IpGuard.ProcessNetwork {
                 if(key==null) throw new InvalidOperationException("驱动所有权记录缺失。");return key;
             }
         }
+        internal static bool CanResumeAfterReboot(string previousBoot,Guid currentBoot) {
+            Guid previous;
+            return currentBoot!=Guid.Empty && Guid.TryParseExact(previousBoot,"D",out previous) && previous!=Guid.Empty && previous!=currentBoot;
+        }
+        internal static bool IsPreviousBoot(Guid currentBoot) {
+            using(RegistryKey key=Open(false)) return CanResumeAfterReboot(key.GetValue("RuntimeBoot") as string,currentBoot);
+        }
         public KernelRuntime(OwnedDriverRegistration registration) {
             this.registration=registration;
             using(Mutex operation=OwnedDriverRegistration.OperationMutex()) {

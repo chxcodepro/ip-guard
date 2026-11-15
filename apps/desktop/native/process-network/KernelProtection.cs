@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Threading;
@@ -34,7 +35,27 @@ namespace IpGuard.ProcessNetwork {
         public void Install() {OwnedDriverRegistration.Install();failure="";}
         public void Start(EgressPolicy egress,IEnumerable<Target> targets,bool recover=false) {
             starting=true;
-            try {setGate(false);StartCore(egress,targets,recover);} finally {starting=false;}
+            try {
+                setGate(false);
+                var waiting=Stopwatch.StartNew();
+                while(true) {
+                    using(Mutex operation=OwnedDriverRegistration.OperationMutex()) {
+                        bool held;try {held=operation.WaitOne(10000);} catch(AbandonedMutexException) {held=true;}
+                        if(!held) throw new TimeoutException("命令防护恢复尚未完成，请稍后重试。");
+                        try {
+                            var record=OwnedDriverRegistration.Read();
+                            Guid boot=BootIdentity.Read();
+                            bool reboot=record!=null && KernelRuntime.IsPreviousBoot(boot);
+                            // A recovery process releases this mutex while stopping the service; wait for its completion marker.
+                            if(!reboot || !record.RecoveryPending || record.RecoveryBootId!=boot) {
+                                StartCore(egress,targets,recover || reboot);return;
+                            }
+                        } finally {operation.ReleaseMutex();}
+                    }
+                    if(waiting.ElapsedMilliseconds>=15000) throw new TimeoutException("开机驱动恢复尚未完成，命令防护保持关闭，请稍后重试。");
+                    Thread.Sleep(100);
+                }
+            } finally {starting=false;}
         }
         void StartCore(EgressPolicy egress,IEnumerable<Target> targets,bool recover) {
             if(Live) return;
