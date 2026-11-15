@@ -169,7 +169,13 @@ try {
     assert(ready, "Private Mihomo did not listen: " + stderr);
     const response = await new Promise<string>((resolve, reject) => {
       const req = request(
-        { host: "127.0.0.1", port, path: "http://198.51.100.10/isolated", agent: false },
+        {
+          host: "127.0.0.1",
+          port,
+          path: "http://198.51.100.10/isolated",
+          headers: { Host: "198.51.100.10" },
+          agent: false,
+        },
         (res) => {
           let text = "";
           res.on("data", (chunk) => (text += chunk.toString()));
