@@ -150,79 +150,104 @@ describe.runIf(process.platform !== "win32")("POSIX managed sessions", () => {
       await new Promise<void>((resolve) => server.close(() => resolve()));
     }
   });
-  it("launches through the real broker and terminal client, then cleans up its owned child", async () => {
-    const probe = new Probe(),
-      policies = new NetworkPolicies();
-    guard = new PosixGuard(probe, policies, async () => "DIRECT");
-    await guard.initialize();
-    const marker = path.join(folder, "child-state"),
-      executable = path.join(folder, "claude");
-    await writeFile(
-      executable,
-      `#!/bin/sh\nprintf '%s\\n%s\\n' "$$" "$HTTPS_PROXY" > "$1"\nwhile :; do sleep 1; done\n`,
-    );
-    await chmod(executable, 0o700);
-    const id = randomUUID();
-    await guard.add({
-      id,
-      name: "controlled fixture",
-      path: executable,
-      arguments: shellArgument(marker),
-      apiScope: "claude",
-      enhanced: false,
-      enabled: false,
-    });
-    await guard.lock({
-      expectedIps: ["8.8.8.8"],
-      intervalSeconds: 60,
-      ipv4Url: "https://claude.ai/cdn-cgi/trace",
-    });
-    await guard.protect(id, true);
-    const client = path.resolve("apps/desktop/dist/posix/client.cjs"),
-      endpoint = path.join(folder, "control.sock");
-    const broker = await preparePosixBroker(guard, process.execPath, client, endpoint);
-    const helper = spawn(process.execPath, [client, endpoint, id, "--"], {
-      cwd: folder,
-      stdio: ["ignore", "ignore", "pipe"],
-    });
-    let error = "";
-    helper.stderr.on("data", (chunk) => (error += chunk.toString()));
-    const ended = once(helper, "exit");
-    void ended.catch(() => undefined);
-    try {
-      let state = "";
-      for (let i = 0; i < 150 && helper.exitCode === null; i++) {
-        try {
-          state = await readFile(marker, "utf8");
-          break;
-        } catch (cause) {
-          if (!cause || typeof cause !== "object" || Reflect.get(cause, "code") !== "ENOENT")
-            throw cause;
+  it.each([false, true])(
+    "launches the real broker and client and cleans up its child (PTY=%s)",
+    async (pty) => {
+      const probe = new Probe(),
+        policies = new NetworkPolicies();
+      guard = new PosixGuard(probe, policies, async () => "DIRECT");
+      await guard.initialize();
+      const marker = path.join(folder, "child-state"),
+        executable = path.join(folder, "claude");
+      await writeFile(
+        executable,
+        `#!/bin/sh\nprintf '%s\\n%s\\n' "$$" "$HTTPS_PROXY" > "$1"\nwhile :; do sleep 1; done\n`,
+      );
+      await chmod(executable, 0o700);
+      const id = randomUUID();
+      await guard.add({
+        id,
+        name: "controlled fixture",
+        path: executable,
+        arguments: shellArgument(marker),
+        apiScope: "claude",
+        enhanced: false,
+        enabled: false,
+      });
+      await guard.lock({
+        expectedIps: ["8.8.8.8"],
+        intervalSeconds: 60,
+        ipv4Url: "https://claude.ai/cdn-cgi/trace",
+      });
+      await guard.protect(id, true);
+      const client = path.resolve("apps/desktop/dist/posix/client.cjs"),
+        endpoint = path.join(folder, "control.sock");
+      const broker = await preparePosixBroker(guard, process.execPath, client, endpoint);
+      const launchArgs = [client, endpoint, id, "--"];
+      const executableCommand = pty ? "/usr/bin/script" : process.execPath;
+      const commandArgs = pty
+        ? process.platform === "darwin"
+          ? ["-q", "/dev/null", process.execPath, ...launchArgs]
+          : [
+              "-q",
+              "-e",
+              "-c",
+              [process.execPath, ...launchArgs].map(shellArgument).join(" "),
+              "/dev/null",
+            ]
+        : launchArgs;
+      const helper = spawn(executableCommand, commandArgs, {
+        cwd: folder,
+        stdio: ["ignore", "ignore", "pipe"],
+      });
+      let error = "";
+      helper.stderr.on("data", (chunk) => (error += chunk.toString()));
+      const ended = once(helper, "exit");
+      void ended.catch(() => undefined);
+      try {
+        let state = "";
+        for (let i = 0; i < 150 && helper.exitCode === null; i++) {
+          try {
+            state = await readFile(marker, "utf8");
+            break;
+          } catch (cause) {
+            if (!cause || typeof cause !== "object" || Reflect.get(cause, "code") !== "ENOENT")
+              throw cause;
+          }
+          await new Promise((resolve) => setTimeout(resolve, 20));
         }
-        await new Promise((resolve) => setTimeout(resolve, 20));
+        expect(state, error).toContain("http://127.0.0.1:");
+        const pid = Number(state.split("\n")[0]);
+        expect(pid).toBeGreaterThan(0);
+        probe.ip = "1.1.1.1";
+        await guard.check();
+        expect(process.kill(pid, 0)).toBe(true);
+        expect(helper.exitCode).toBeNull();
+        guard.stopSessions();
+        await Promise.race([
+          ended,
+          new Promise((_, reject) =>
+            setTimeout(() => reject(new Error("Owned session did not stop")), 5000),
+          ),
+        ]);
+        for (let i = 0; i < 100; i++) {
+          try {
+            process.kill(pid, 0);
+          } catch {
+            break;
+          }
+          await new Promise((resolve) => setTimeout(resolve, 20));
+        }
+        expect(() => process.kill(pid, 0)).toThrow();
+        expect(guard.snapshot.running).toEqual([]);
+      } finally {
+        guard.stop();
+        if (helper.exitCode === null) helper.kill();
+        await new Promise<void>((resolve) => broker.close(() => resolve()));
       }
-      expect(state, error).toContain("http://127.0.0.1:");
-      const pid = Number(state.split("\n")[0]);
-      expect(pid).toBeGreaterThan(0);
-      probe.ip = "1.1.1.1";
-      await guard.check();
-      expect(process.kill(pid, 0)).toBe(true);
-      expect(helper.exitCode).toBeNull();
-      guard.stopSessions();
-      await Promise.race([
-        ended,
-        new Promise((_, reject) =>
-          setTimeout(() => reject(new Error("Owned session did not stop")), 5000),
-        ),
-      ]);
-      expect(() => process.kill(pid, 0)).toThrow();
-      expect(guard.snapshot.running).toEqual([]);
-    } finally {
-      guard.stop();
-      if (helper.exitCode === null) helper.kill();
-      await new Promise<void>((resolve) => broker.close(() => resolve()));
-    }
-  });
+    },
+    15000,
+  );
   it("merges CLI settings in a private file and leaves the source unchanged", async () => {
     const original = path.join(folder, "original.json");
     const text = JSON.stringify({

@@ -238,7 +238,7 @@ async function action(command: Command): Promise<Reply> {
     case "coffee:status":
       return { diagnostics: coffee.report };
     case "coffee:refresh":
-      await coffee.refresh();
+      coffee.refresh();
       return { diagnostics: coffee.report };
     case "extension:status":
       return { extension: await browser.status() };
@@ -257,7 +257,7 @@ async function action(command: Command): Promise<Reply> {
     case "update:download":
       return { appUpdate: await updates.download() };
     case "update:install":
-      updates.install();
+      await updates.install();
       return { appUpdate: updates.state };
     case "update:releases":
       await shell.openExternal("https://github.com/chxcodepro/ip-guard/releases");

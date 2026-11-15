@@ -110,3 +110,12 @@ createInterface({ input: connection }).on("line", (line) => {
   });
 });
 for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"] as const) process.on(signal, stop);
+process.on("SIGWINCH", () => {
+  if (child?.pid && child.exitCode === null)
+    try {
+      process.kill(-child.pid, "SIGWINCH");
+    } catch (error) {
+      if (!error || typeof error !== "object" || Reflect.get(error, "code") !== "ESRCH")
+        throw error;
+    }
+});
