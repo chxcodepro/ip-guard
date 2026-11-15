@@ -1,0 +1,52 @@
+name: Validate Windows proxy paths in isolation
+
+on:
+  push:
+    branches: [codex/windows-stable-validation]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 12.15.0
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24.22.1
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Check selected proxy and policy contracts
+        run: pnpm exec vp test --project unit apps/desktop/src/main/mihomo-config.test.ts apps/desktop/src/main/forced-proxy.test.ts apps/desktop/src/main/http-proxy.test.ts packages/electron/src/network-policy.test.ts
+      - name: Build the native proxy host without installing a driver
+        run: node apps/desktop/scripts/build-native.ts
+      - name: Verify real private Mihomo forwarding and shutdown
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $folder = Join-Path $env:RUNNER_TEMP 'ipguard-mihomo'
+          New-Item -ItemType Directory -Path $folder | Out-Null
+          $zip = Join-Path $folder 'mihomo.zip'
+          Invoke-WebRequest -Uri 'https://github.com/MetaCubeX/mihomo/releases/download/v1.19.34/mihomo-windows-amd64-compatible-v1.19.34.zip' -OutFile $zip
+          Expand-Archive -LiteralPath $zip -DestinationPath $folder
+          $images = @(Get-ChildItem -LiteralPath $folder -Filter '*.exe' -File)
+          if ($images.Count -ne 1) { throw 'Official Mihomo archive must contain one executable' }
+          $env:IPGUARD_MIHOMO = $images[0].FullName
+          New-Item -ItemType Directory -Path artifacts/windows-stable -Force | Out-Null
+          node apps/desktop/scripts/verify-mihomo-runtime.ts 2>&1 | Tee-Object -FilePath artifacts/windows-stable/mihomo.log
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Upload verification logs
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: windows-stable-validation
+          path: artifacts/windows-stable/
+          if-no-files-found: warn
