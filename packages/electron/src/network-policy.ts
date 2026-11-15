@@ -76,17 +76,7 @@ export const networkPolicySchema = z
   });
 export type NetworkPolicy = z.infer<typeof networkPolicySchema>;
 export type NetworkRule = z.infer<typeof networkRuleSchema>;
-export const initialNetworkPolicy: NetworkPolicy = {
-  rules: [
-    {
-      id: "b0c7e969-e7e6-470f-9628-d9b82d8cc0ee",
-      enabled: true,
-      host: "localhost",
-      port: 5173,
-      action: "direct",
-    },
-  ],
-};
+export const initialNetworkPolicy: NetworkPolicy = { rules: [] };
 export function networkAction(
   policy: NetworkPolicy,
   target: { host: string; port: number },
@@ -104,6 +94,7 @@ export function localPolicyPorts(policy: NetworkPolicy): number[] {
     .sort((a, b) => a - b);
 }
 export const networkPolicyStateSchema = z.object({
+  scope: z.enum(["system", "managed_proxy"]).optional(),
   settings: networkPolicySchema,
   revision: z.uuid(),
   phase: z.enum(["active", "paused", "inactive", "failed"]),

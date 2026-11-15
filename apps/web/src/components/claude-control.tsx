@@ -4,7 +4,7 @@ import { toast } from "sonner";
 
 import type { ClaudeState } from "@ip-guard/electron";
 
-export function ClaudeControl() {
+export function ClaudeControl({ managedOnly = false }: { managedOnly?: boolean }) {
   const bridge = window.desktop;
   const [state, setState] = useState<ClaudeState>({
     phase: "unknown",
@@ -63,7 +63,7 @@ export function ClaudeControl() {
       const reply = await bridge.invoke({ action: "claude:stop" });
       if (reply.claude) setState(reply.claude);
       if (!reply.cancelled && reply.claude?.phase === "stopped")
-        toast.success("Claude 进程树已停止");
+        toast.success(managedOnly ? "受管会话已停止" : "Claude 进程树已停止");
     } catch (error) {
       toast.error(
         (error instanceof Error ? error.message : "停止失败").replace(
@@ -106,8 +106,8 @@ export function ClaudeControl() {
         title={state.message || "停止当前用户的 Claude CLI 和 Desktop 进程树"}
         onClick={() => void stop()}
       >
-        {stopping ? <LoaderCircle size={14} className="spin" /> : <Square size={13} />}停止 Claude
-        进程树
+        {stopping ? <LoaderCircle size={14} className="spin" /> : <Square size={13} />}
+        {managedOnly ? "停止受管会话" : "停止 Claude 进程树"}
       </button>
       <span
         className={`claude-run-state ${state.phase}`}

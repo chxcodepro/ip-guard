@@ -8,8 +8,14 @@ const repository = process.env.GITHUB_REPOSITORY ?? "";
 if (repository && !/^[A-Za-z0-9][A-Za-z0-9-]{0,38}\/[A-Za-z0-9_.-]{1,100}$/.test(repository))
   throw new Error("Invalid GITHUB_REPOSITORY");
 writeFileSync(path.join(root, "dist/release-info.json"), JSON.stringify({ repository }), "utf8");
-const args = ["--config", "electron-builder.yml", "--publish", "never"];
-if (repository) {
+const windows = process.platform === "win32";
+const args = [
+  "--config",
+  windows ? "electron-builder.yml" : "electron-builder.posix.yml",
+  "--publish",
+  "never",
+];
+if (repository && windows) {
   const [owner, repo] = repository.split("/");
   args.push(
     "--config.publish.provider=github",
@@ -23,7 +29,7 @@ const result = spawnSync(process.execPath, [cli, ...args], {
   stdio: "inherit",
 });
 if (result.error) throw result.error;
-if (result.status === 0) {
+if (result.status === 0 && windows) {
   const metadata: unknown = JSON.parse(readFileSync(path.join(root, "package.json"), "utf8"));
   if (
     !metadata ||

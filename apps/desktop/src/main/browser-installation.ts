@@ -1,4 +1,5 @@
 import { readFile, readdir } from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 
 import { z } from "zod";
@@ -20,13 +21,24 @@ export async function browserInstallations(latestVersion: string) {
   const installedBrowsers: ("Chrome" | "Edge")[] = [];
   const outdatedBrowsers: ("Chrome" | "Edge")[] = [];
   const errors: string[] = [];
-  const local = process.env.LOCALAPPDATA;
-  if (!local) return { installedBrowsers, outdatedBrowsers, error: "Windows 用户目录不可用" };
-  for (const browser of [
-    { name: "Chrome", folder: "Google/Chrome/User Data" },
-    { name: "Edge", folder: "Microsoft/Edge/User Data" },
-  ] as const) {
-    const root = path.join(local, browser.folder);
+  const local =
+    process.platform === "win32"
+      ? process.env.LOCALAPPDATA
+      : process.platform === "darwin"
+        ? path.join(os.homedir(), "Library/Application Support")
+        : process.env.XDG_CONFIG_HOME || path.join(os.homedir(), ".config");
+  if (!local) return { installedBrowsers, outdatedBrowsers, error: "用户目录不可用" };
+  const roots =
+    process.platform === "win32"
+      ? ["Google/Chrome/User Data", "Microsoft/Edge/User Data"]
+      : process.platform === "darwin"
+        ? ["Google/Chrome", "Microsoft Edge"]
+        : ["google-chrome", "microsoft-edge"];
+  for (const [index, name] of (["Chrome", "Edge"] as const).entries()) {
+    const browser = { name };
+    const folder = roots[index];
+    if (!folder) continue;
+    const root = path.join(local, folder);
     let installed = false;
     let outdated = false;
     try {

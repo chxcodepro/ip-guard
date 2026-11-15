@@ -1,0 +1,78 @@
+name: Build Linux and macOS previews
+
+on:
+  push:
+    branches: [codex/posix-desktop]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-22.04
+            platform: linux
+            arch: x64
+          - runner: macos-15
+            platform: macos
+            arch: arm64
+          - runner: macos-15-intel
+            platform: macos
+            arch: x64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 12.15.0
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24.22.1
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Build desktop and platform client
+        run: pnpm exec vp run package:desktop
+      - name: Verify changed POSIX contracts
+        run: pnpm exec vp test --project unit apps/desktop/src/main/posix-platform.test.ts apps/desktop/src/main/posix-guard.test.ts packages/electron/src/network-policy.test.ts
+      - name: Inspect packaged Linux UI
+        if: matrix.platform == 'linux'
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/ipguard-home"
+          export HOME="$RUNNER_TEMP/ipguard-home"
+          export XDG_CONFIG_HOME="$HOME/.config"
+          timeout 40s xvfb-run -a apps/desktop/release-posix/linux-unpacked/ip-guard --no-sandbox --posix-smoke
+      - name: Inspect packaged macOS UI
+        if: matrix.platform == 'macos'
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/ipguard-home"
+          export HOME="$RUNNER_TEMP/ipguard-home"
+          app=$(find apps/desktop/release-posix -maxdepth 2 -name 'IP Guard.app' -type d -print -quit)
+          test -n "$app"
+          "$app/Contents/MacOS/IP Guard" --posix-smoke &
+          pid=$!
+          for i in $(seq 1 40); do
+            if ! kill -0 "$pid" 2>/dev/null; then wait "$pid"; exit $?; fi
+            sleep 1
+          done
+          kill "$pid"
+          exit 1
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: IP-Guard-${{ matrix.platform }}-${{ matrix.arch }}-preview
+          path: |
+            apps/desktop/release-posix/*.AppImage
+            apps/desktop/release-posix/*.deb
+            apps/desktop/release-posix/*.dmg
+            apps/desktop/release-posix/*.zip
+            artifacts/posix-smoke/
+          if-no-files-found: warn

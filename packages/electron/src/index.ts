@@ -209,6 +209,7 @@ export const initialStartupStatus = {
   message: "等待检查启动项",
 } as const;
 export const snapshotSchema = z.object({
+  platform: z.enum(["win32", "linux", "darwin"]).optional(),
   networkPolicy: kernelNetworkPolicySchema,
   enhancementReady: z.boolean().default(false),
   enhancementReason: z.string().default("等待增强出口复核"),
@@ -244,7 +245,13 @@ export const snapshotSchema = z.object({
     intervalSeconds: z.number().int().min(1).max(60),
     ipv4Url: ipv4SourceUrlSchema.default(claudeIpv4Endpoint),
   }),
-  apps: z.array(appSchema.extend({ pathIssue: z.string(), isClaudeCode: z.boolean() })),
+  apps: z.array(
+    appSchema.extend({
+      pathIssue: z.string(),
+      isClaudeCode: z.boolean(),
+      launcherPath: z.string().optional(),
+    }),
+  ),
   logs: z.array(logSchema),
 });
 export const commandSchema = z.discriminatedUnion("action", [

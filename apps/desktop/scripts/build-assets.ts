@@ -56,6 +56,7 @@ const png = (size: number) => {
   ]);
 };
 writeFileSync(path.join(dir, "tray.png"), png(32));
+writeFileSync(path.join(dir, "icon.png"), png(1024));
 const data = png(256),
   ico = Buffer.alloc(22);
 ico.writeUInt16LE(1, 2);

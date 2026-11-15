@@ -10,7 +10,10 @@ export default defineConfig({
       formats: ["es"],
     },
     outDir: "dist/main",
-    rolldownOptions: { external: ["electron", "electron-updater"] },
+    rolldownOptions: {
+      external: ["electron", "electron-updater"],
+      output: { chunkFileNames: "[name]-[hash].js" },
+    },
     ssr: true,
     target: "node22",
   },

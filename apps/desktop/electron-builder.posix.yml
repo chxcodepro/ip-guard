@@ -1,0 +1,34 @@
+appId: com.ip-guard.desktop
+productName: IP Guard
+asar: true
+npmRebuild: false
+directories:
+  output: release-posix
+files:
+  - dist/main/**/*
+  - dist/preload/**/*
+  - dist/renderer/**/*
+extraResources:
+  - from: dist/posix
+    to: posix
+  - from: ../browser-extension/dist
+    to: browser-extension
+  - from: assets
+    to: assets
+mac:
+  category: public.app-category.utilities
+  icon: assets/icon.png
+  identity: "-"
+  hardenedRuntime: false
+  notarize: false
+  target: [dmg, zip]
+  artifactName: IP-Guard-macOS-Preview-${arch}.${ext}
+linux:
+  category: Utility
+  icon: assets/icon.png
+  executableName: ip-guard
+  maintainer: chxcodepro
+  synopsis: Managed Claude IPv4 proxy gate
+  target: [AppImage, deb]
+  artifactName: IP-Guard-Linux-Preview-${arch}.${ext}
+publish: null

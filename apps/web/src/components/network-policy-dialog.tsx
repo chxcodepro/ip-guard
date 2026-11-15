@@ -95,7 +95,9 @@ export function NetworkPolicyDialog({
         <header>
           <div>
             <h2 id="network-policy-title">拦截策略</h2>
-            <p className="policy-scope">全局 · 使用受控代理的程序</p>
+            <p className="policy-scope">
+              {state?.scope === "managed_proxy" ? "受管代理连接" : "全局 · 使用受控代理的程序"}
+            </p>
           </div>
           <button
             type="button"
@@ -127,26 +129,32 @@ export function NetworkPolicyDialog({
                 <dt>其他本机端口</dt>
                 <dd>阻断</dd>
               </div>
-              <div>
-                <dt>进程公网直连</dt>
-                <dd>阻断</dd>
-              </div>
-              <div>
-                <dt>进程 UDP / 公网 IPv6</dt>
-                <dd>阻断</dd>
-              </div>
+              {state?.scope !== "managed_proxy" && (
+                <div>
+                  <dt>进程公网直连</dt>
+                  <dd>阻断</dd>
+                </div>
+              )}
+              {state?.scope !== "managed_proxy" && (
+                <div>
+                  <dt>进程 UDP / 公网 IPv6</dt>
+                  <dd>阻断</dd>
+                </div>
+              )}
               <div>
                 <dt>IPv4 未通过</dt>
                 <dd>暂停公网连接</dd>
               </div>
-              <div>
-                <dt>进程树过滤</dt>
-                <dd>{state?.childProtection ? "已就绪" : "未就绪"}</dd>
-              </div>
+              {state?.scope !== "managed_proxy" && (
+                <div>
+                  <dt>进程树过滤</dt>
+                  <dd>{state?.childProtection ? "已就绪" : "未就绪"}</dd>
+                </div>
+              )}
               <div className="policy-fact-wide">
-                <dt>内核本机端口</dt>
+                <dt>{state?.scope === "managed_proxy" ? "代理本机端口" : "内核本机端口"}</dt>
                 <dd>
-                  {state?.childProtection
+                  {state?.childProtection || state?.scope === "managed_proxy"
                     ? state.localPorts.length
                       ? state.localPorts.join("、")
                       : "无"

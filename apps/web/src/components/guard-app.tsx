@@ -527,7 +527,7 @@ function AddDialog({
                 value={path}
                 title={path}
                 readOnly
-                placeholder="选择 .exe 文件"
+                placeholder="选择程序文件"
                 required
               />
               <button type="button" className="btn" onClick={() => void pick()} disabled={busy}>
@@ -565,7 +565,7 @@ function AddDialog({
           <button
             type="submit"
             className="btn primary"
-            title={canAdd ? undefined : "需要管理员守护"}
+            title={canAdd ? undefined : "等待可用的桌面守护"}
             disabled={!path || !name || busy || !canAdd || duplicate}
           >
             {busy ? <LoaderCircle size={15} className="spin" /> : <Plus size={15} />}
@@ -657,7 +657,7 @@ export function GuardApp() {
   }, [bridge]);
   const invoke = async (command: Command, onFailure?: (message: string) => void) => {
     if (!bridge) {
-      toast.error("请在 Windows 桌面版中执行此操作");
+      toast.error("请在桌面版中执行此操作");
       return undefined;
     }
     setBusy(true);
@@ -679,7 +679,8 @@ export function GuardApp() {
   };
   const locked = snapshot.rulesLocked;
   const offline = Boolean(bridge && !loading && (!snapshot.online || failure));
-  const available = Boolean(bridge && snapshot.online && snapshot.admin && !failure);
+  const portable = Boolean(snapshot.platform && snapshot.platform !== "win32");
+  const available = Boolean(bridge && snapshot.online && (portable || snapshot.admin) && !failure);
   const enabledCount = snapshot.apps.filter((a) => a.enabled && !a.pathIssue).length;
   const startupEnabled =
     snapshot.startup.state === "unknown" ? snapshot.autostart : snapshot.startup.enabled;
@@ -755,12 +756,12 @@ export function GuardApp() {
             const canUseOtherModel =
               target.isClaudeCode && target.apiScope !== "claude" && !target.enhanced;
             const actionReason = !bridge
-              ? "请在 Windows 桌面版操作"
+              ? "请在桌面版操作"
               : loading
                 ? "等待守护程序连接"
                 : offline
                   ? "请重启守护程序"
-                  : !snapshot.admin
+                  : !snapshot.admin && !portable
                     ? "请以管理员身份重启"
                     : !running && target.pathIssue
                       ? target.pathIssue
@@ -805,32 +806,50 @@ export function GuardApp() {
                       {programProtectionStatus(snapshot, target)}
                     </div>
                   )}
-                  <div className="app-enhancement">
-                    <Toggle
-                      checked={target.enhanced}
-                      label={`${target.name} 本机 IP 防泄露增强`}
-                      disabled={
-                        busy || !available || (!target.enhanced && (!target.enabled || !locked))
-                      }
-                      onChange={() =>
-                        void invoke({ action: "enhance", id: target.id, enabled: !target.enhanced })
-                      }
-                    />
-                    <span>
-                      本机 IP 防泄露 <span className="muted">可选增强</span>
-                    </span>
-                    {target.enhanced && (
-                      <span
-                        className={`small-status ${snapshot.driver.ready ? "good" : "warning"}`}
-                      >
-                        {snapshot.driver.ready
-                          ? snapshot.enhancementReady
-                            ? "检测出口已通过"
-                            : snapshot.enhancementReason
-                          : "未生效，请检查过滤器"}
+                  {!portable && (
+                    <div className="app-enhancement">
+                      <Toggle
+                        checked={target.enhanced}
+                        label={`${target.name} 本机 IP 防泄露增强`}
+                        disabled={
+                          busy || !available || (!target.enhanced && (!target.enabled || !locked))
+                        }
+                        onChange={() =>
+                          void invoke({
+                            action: "enhance",
+                            id: target.id,
+                            enabled: !target.enhanced,
+                          })
+                        }
+                      />
+                      <span>
+                        本机 IP 防泄露 <span className="muted">可选增强</span>
                       </span>
-                    )}
-                  </div>
+                      {target.enhanced && (
+                        <span
+                          className={`small-status ${snapshot.driver.ready ? "good" : "warning"}`}
+                        >
+                          {snapshot.driver.ready
+                            ? snapshot.enhancementReady
+                              ? "检测出口已通过"
+                              : snapshot.enhancementReason
+                            : "未生效，请检查过滤器"}
+                        </span>
+                      )}
+                    </div>
+                  )}
+                  {portable && target.launcherPath && (
+                    <button
+                      className="text-btn"
+                      onClick={() =>
+                        void navigator.clipboard
+                          .writeText(`'${target.launcherPath?.replaceAll("'", "'\\''")}'`)
+                          .then(() => toast.success("受管终端命令已复制"))
+                      }
+                    >
+                      复制终端启动命令
+                    </button>
+                  )}
                   {(target.pathIssue || actionReason) && (
                     <div
                       className={`app-action-reason ${target.pathIssue ? "path-warning" : ""}`}
@@ -962,7 +981,15 @@ export function GuardApp() {
           <div className="sidebar-divider" />
           <div className="sidebar-footer">
             <span className={`tiny-dot ${available ? "good" : ""}`} />
-            <span>{bridge ? (snapshot.admin ? "管理员模式" : "普通权限") : "浏览器预览"}</span>
+            <span>
+              {bridge
+                ? portable
+                  ? `${snapshot.platform === "darwin" ? "macOS" : "Linux"} · 受管代理开发版`
+                  : snapshot.admin
+                    ? "管理员模式"
+                    : "普通权限"
+                : "浏览器预览"}
+            </span>
             <span
               className="version"
               title={`原生组件 ${snapshot.online ? snapshot.nativeVersion : "未连接"}`}
@@ -978,7 +1005,7 @@ export function GuardApp() {
             <span>{title}</span>
           </div>
           <div className="topbar-actions">
-            <ClaudeControl />
+            <ClaudeControl managedOnly={portable} />
             <button
               type="button"
               className="btn ip-visibility"
@@ -1006,7 +1033,7 @@ export function GuardApp() {
               {status}
             </div>
           </div>
-          {(!bridge || offline || (bridge && !snapshot.admin && !loading)) && (
+          {(!bridge || offline || (bridge && !portable && !snapshot.admin && !loading)) && (
             <div className="notice" role="alert">
               <ShieldOff size={18} />
               <span>
@@ -1014,7 +1041,7 @@ export function GuardApp() {
                   failure ||
                     (offline ? snapshot.reason || "守护程序离线，请重启 IP Guard。" : "") ||
                     (!bridge
-                      ? "请打开 Windows 桌面版以配置启动拦截与后台防护。"
+                      ? "请打开桌面版以配置启动校验与后台防护。"
                       : "管理启动拦截与防火墙需要管理员权限。"),
                   ipsVisible,
                 )}
@@ -1030,6 +1057,7 @@ export function GuardApp() {
                 </button>
               ) : (
                 bridge &&
+                !portable &&
                 !snapshot.admin && (
                   <button
                     className="text-btn"
@@ -1252,44 +1280,51 @@ export function GuardApp() {
                     available={available}
                     onSetup={async () => Boolean(await invoke({ action: "extension:setup" }))}
                   />
-                  <ProxyEnhancementPanel busy={busy} onAction={invoke} ipsVisible={ipsVisible} />
-                  <details
-                    className="settings-group settings-advanced"
-                    open={strictSetupOpen}
-                    onToggle={(event) => setStrictSetupOpen(event.currentTarget.open)}
-                  >
-                    <summary className="setting-row">
-                      <span className="setting-icon">
-                        <ShieldCheck size={19} />
-                      </span>
-                      <strong>
-                        严格命令防护 <span className="small-status warning">实验</span>
-                      </strong>
-                      <span className="route-value">
-                        {[
-                          snapshot.egress && "专用出口已启用",
-                          snapshot.driver.enabled && "命令过滤已开启",
-                        ]
-                          .filter(Boolean)
-                          .join(" · ") || "未启用"}
-                      </span>
-                      <ChevronRight size={15} className="advanced-chevron" />
-                    </summary>
-                    <CommandProtectionPanel
-                      snapshot={snapshot}
-                      busy={busy}
-                      available={available}
-                      onAction={invoke}
-                    />
-                    {snapshot.egress && (
-                      <FixedEgressPanel
+                  <ProxyEnhancementPanel
+                    busy={busy}
+                    onAction={invoke}
+                    ipsVisible={ipsVisible}
+                    managedOnly={portable}
+                  />
+                  {!portable && (
+                    <details
+                      className="settings-group settings-advanced"
+                      open={strictSetupOpen}
+                      onToggle={(event) => setStrictSetupOpen(event.currentTarget.open)}
+                    >
+                      <summary className="setting-row">
+                        <span className="setting-icon">
+                          <ShieldCheck size={19} />
+                        </span>
+                        <strong>
+                          严格命令防护 <span className="small-status warning">实验</span>
+                        </strong>
+                        <span className="route-value">
+                          {[
+                            snapshot.egress && "专用出口已启用",
+                            snapshot.driver.enabled && "命令过滤已开启",
+                          ]
+                            .filter(Boolean)
+                            .join(" · ") || "未启用"}
+                        </span>
+                        <ChevronRight size={15} className="advanced-chevron" />
+                      </summary>
+                      <CommandProtectionPanel
                         snapshot={snapshot}
                         busy={busy}
                         available={available}
                         onAction={invoke}
                       />
-                    )}
-                  </details>
+                      {snapshot.egress && (
+                        <FixedEgressPanel
+                          snapshot={snapshot}
+                          busy={busy}
+                          available={available}
+                          onAction={invoke}
+                        />
+                      )}
+                    </details>
+                  )}
                 </section>
                 <section
                   className="panel settings-block"

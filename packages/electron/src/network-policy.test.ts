@@ -8,7 +8,9 @@ import {
 } from "./network-policy.ts";
 
 describe("global TCP policy", () => {
-  it("permits only the explicit local development port by default", () => {
+  it("starts with no exceptions or automatically allowed local development ports", () => {
+    expect(initialNetworkPolicy.rules).toEqual([]);
+    expect(networkPolicySchema.parse(initialNetworkPolicy)).toEqual({ rules: [] });
     for (const host of [
       "localhost",
       "127.0.0.1",
@@ -18,12 +20,23 @@ describe("global TCP policy", () => {
       "[::1]",
       "app.localhost",
     ])
-      expect(networkAction(initialNetworkPolicy, { host, port: 5173 })).toBe("direct");
+      expect(networkAction(initialNetworkPolicy, { host, port: 5173 })).toBe("block");
     expect(networkAction(initialNetworkPolicy, { host: "localhost", port: 7890 })).toBe("block");
     expect(networkAction(initialNetworkPolicy, { host: "api.deepseek.com", port: 443 })).toBe(
       "proxy",
     );
-    expect(localPolicyPorts(initialNetworkPolicy)).toEqual([5173]);
+    expect(localPolicyPorts(initialNetworkPolicy)).toEqual([]);
+  });
+  it("opens a local development port only when the user adds an enabled direct rule", () => {
+    const policy = networkPolicySchema.parse({
+      rules: [
+        { id: crypto.randomUUID(), enabled: true, host: "localhost", port: 3000, action: "direct" },
+      ],
+    });
+    expect(networkAction(policy, { host: "127.0.0.1", port: 3000 })).toBe("direct");
+    expect(networkAction(policy, { host: "::1", port: 3000 })).toBe("direct");
+    expect(networkAction(policy, { host: "localhost", port: 5173 })).toBe("block");
+    expect(localPolicyPorts(policy)).toEqual([3000]);
   });
   it("matches an exact enabled host and port, without a suffix or port escape", () => {
     const policy = networkPolicySchema.parse({
@@ -54,8 +67,13 @@ describe("global TCP policy", () => {
     expect(networkAction(policy, { host: "api.example.com", port: 443 })).toBe("proxy");
   });
   it("rejects duplicate aliases, invalid ports and malformed host inputs", () => {
-    const base = initialNetworkPolicy.rules[0];
-    if (!base) throw new Error("Default local rule missing");
+    const base = {
+      id: crypto.randomUUID(),
+      enabled: true,
+      host: "localhost",
+      port: 3000,
+      action: "direct",
+    };
     expect(
       networkPolicySchema.safeParse({
         rules: [base, { ...base, id: crypto.randomUUID(), host: "127.0.0.1" }],

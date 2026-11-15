@@ -8,10 +8,12 @@ export function ProxyEnhancementPanel({
   busy,
   onAction,
   ipsVisible,
+  managedOnly = false,
 }: {
   busy: boolean;
   onAction: (command: Command, onFailure?: (message: string) => void) => Promise<Reply | undefined>;
   ipsVisible: boolean;
+  managedOnly?: boolean;
 }) {
   const [state, setState] = useState<ProxyEnhancementState>();
   const [mode, setMode] = useState<"system" | "manual">("system");
@@ -107,7 +109,7 @@ export function ProxyEnhancementPanel({
           <Cable size={19} />
         </span>
         <div className="setting-info">
-          <strong>Claude 专用代理</strong>
+          <strong>{managedOnly ? "受管代理来源" : "Claude 专用代理"}</strong>
           <span className="setting-detail" role="status">
             {state?.error || state?.endpoint || "正在读取"}
           </span>
@@ -146,7 +148,7 @@ export function ProxyEnhancementPanel({
             }
           }}
         >
-          <option value="system">自动识别当前代理核心</option>
+          <option value="system">{managedOnly ? "跟随系统代理" : "自动识别当前代理核心"}</option>
           <option value="manual">指定本机代理入口</option>
         </select>
       </div>

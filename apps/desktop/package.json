@@ -10,7 +10,7 @@
     "#src/*": "./src/*"
   },
   "scripts": {
-    "build": "node scripts/prepare-fort.ts && node scripts/build-assets.ts && node scripts/build-native.ts && vp build --config vite.main.config.ts && vp build --config vite.preload.config.ts",
+    "build": "node scripts/build-runtime.ts && vp build --config vite.main.config.ts && vp build --config vite.preload.config.ts && vp build --config vite.posix.config.ts",
     "package": "vp run --filter @ip-guard/browser-extension build && vp run --filter @ip-guard/web build && node scripts/copy-renderer.ts && vp run build && node scripts/package.ts",
     "dev": "vp run build && node scripts/dev.ts"
   },

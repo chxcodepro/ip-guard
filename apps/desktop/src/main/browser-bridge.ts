@@ -1,3 +1,4 @@
+import { chmod } from "node:fs/promises";
 import { createServer } from "node:net";
 import type { Server, Socket } from "node:net";
 
@@ -13,8 +14,16 @@ import type { BrowserState, ExtensionStatus } from "@ip-guard/electron";
 
 import { browserInstallations } from "#src/main/browser-installation.ts";
 import { ClaudeIPv4 } from "#src/main/claude-ip.ts";
-import type { Guardian } from "#src/main/guardian.ts";
 import type { ApplicationUpdates } from "#src/main/updates.ts";
+
+import { posixBrowserSocketPath } from "./posix-platform.ts";
+
+interface BrowserGuardSource {
+  snapshot?: import("@ip-guard/electron").Snapshot;
+  error: string;
+  on(event: "identity", listener: (id: string) => void): unknown;
+  on(event: "snapshot", listener: () => void): unknown;
+}
 
 const clientSchema = z
   .object({ extensionVersion: z.union([z.literal(""), extensionVersionSchema]) })
@@ -24,11 +33,11 @@ export class BrowserBridge {
   private server: Server | undefined;
   private clients = new Map<Socket, string | undefined>();
   private timer: ReturnType<typeof setInterval> | undefined;
-  private guardian: Guardian;
+  private guardian: BrowserGuardSource;
   private updates: ApplicationUpdates;
   private systemProbe: ClaudeIPv4 | undefined;
   private systemChecking = false;
-  constructor(guardian: Guardian, updates: ApplicationUpdates) {
+  constructor(guardian: BrowserGuardSource, updates: ApplicationUpdates) {
     this.guardian = guardian;
     this.updates = updates;
     guardian.on("identity", (sid: string) => this.listen(sid));
@@ -113,7 +122,13 @@ export class BrowserBridge {
       console.error("浏览器连接服务", error);
       this.close();
     });
-    server.listen(`\\\\.\\pipe\\IPGuard-Browser-${sid}`);
+    const endpoint =
+      process.platform === "win32"
+        ? `\\\\.\\pipe\\IPGuard-Browser-${sid}`
+        : posixBrowserSocketPath();
+    if (process.platform !== "win32")
+      server.once("listening", () => void chmod(endpoint, 0o600).catch(() => this.close()));
+    server.listen(endpoint);
     this.server = server;
     this.timer = setInterval(() => this.publish(), 1000);
   }
