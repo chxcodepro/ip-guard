@@ -1,6 +1,6 @@
 {
   "name": "@ip-guard/desktop",
-  "version": "0.12.4",
+  "version": "0.13.0",
   "private": true,
   "license": "GPL-3.0-only",
   "description": "Windows application IPv4 launch gate and network guardian",
@@ -16,7 +16,8 @@
   },
   "dependencies": {
     "electron-updater": "^6.8.11",
-    "socks": "catalog:"
+    "socks": "catalog:",
+    "yaml": "catalog:"
   },
   "devDependencies": {
     "@ip-guard/config": "workspace:*",

@@ -23,6 +23,7 @@ export function ProxyEnhancementPanel({
   const focusManual = useRef(false);
   const input = useRef<HTMLInputElement>(null);
   const selector = useRef<HTMLSelectElement>(null);
+  const groupSelector = useRef<HTMLSelectElement>(null);
   useEffect(() => {
     if (focusManual.current && input.current) {
       input.current.focus();
@@ -61,6 +62,7 @@ export function ProxyEnhancementPanel({
     const previous = saved.current;
     if (
       previous?.mode === settings.mode &&
+      previous.mihomoGroup === settings.mihomoGroup &&
       (settings.mode === "system" ||
         (previous.mode === "manual" && previous.address === settings.address))
     ) {
@@ -87,7 +89,11 @@ export function ProxyEnhancementPanel({
   };
   const saveAddress = () => {
     if (busy || saving.current) return;
-    const parsed = proxySettingsSchema.safeParse({ mode: "manual", address });
+    const parsed = proxySettingsSchema.safeParse({
+      mode: "manual",
+      address,
+      mihomoGroup: saved.current?.mihomoGroup,
+    });
     if (!parsed.success) {
       setError(parsed.error.issues[0]?.message || "请填写有效的本机代理入口");
       return;
@@ -127,10 +133,15 @@ export function ProxyEnhancementPanel({
             const next = event.target.value;
             setMode(next);
             setError("");
-            if (next === "system") void save({ mode: "system" });
+            if (next === "system")
+              void save({ mode: "system", mihomoGroup: saved.current?.mihomoGroup });
             else {
               focusManual.current = true;
-              const parsed = proxySettingsSchema.safeParse({ mode: "manual", address });
+              const parsed = proxySettingsSchema.safeParse({
+                mode: "manual",
+                address,
+                mihomoGroup: saved.current?.mihomoGroup,
+              });
               if (parsed.success) void save(parsed.data);
             }
           }}
@@ -139,6 +150,36 @@ export function ProxyEnhancementPanel({
           <option value="manual">指定本机代理入口</option>
         </select>
       </div>
+      {state?.core === "mihomo" && (
+        <div className="setting-row">
+          <label htmlFor="mihomo-group">Mihomo 代理组</label>
+          <select
+            id="mihomo-group"
+            ref={groupSelector}
+            value={state.settings.mihomoGroup ?? ""}
+            disabled={busy || saving.current}
+            onChange={(event) => {
+              const parsed = proxySettingsSchema.safeParse({
+                mode,
+                ...(mode === "manual" ? { address } : {}),
+                mihomoGroup: event.target.value || undefined,
+              });
+              if (parsed.success) void save(parsed.data);
+              else setError(parsed.error.issues[0]?.message || "请检查代理入口");
+            }}
+          >
+            <option value="">自动识别</option>
+            {state.settings.mihomoGroup && !state.groups?.includes(state.settings.mihomoGroup) && (
+              <option value={state.settings.mihomoGroup}>{state.settings.mihomoGroup}</option>
+            )}
+            {state.groups?.map((name) => (
+              <option key={name} value={name}>
+                {name}
+              </option>
+            ))}
+          </select>
+        </div>
+      )}
       {(mode === "manual" || error) && (
         <div className="egress-import">
           {mode === "manual" && (
@@ -157,7 +198,11 @@ export function ProxyEnhancementPanel({
                   setError("");
                 }}
                 onBlur={(event) => {
-                  if (event.relatedTarget !== selector.current) saveAddress();
+                  if (
+                    event.relatedTarget !== selector.current &&
+                    event.relatedTarget !== groupSelector.current
+                  )
+                    saveAddress();
                 }}
                 onKeyDown={(event) => {
                   if (event.key === "Enter") {

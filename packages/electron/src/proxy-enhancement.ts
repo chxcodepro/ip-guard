@@ -22,8 +22,15 @@ export const proxyAddressSchema = z
     }
   }, "填写 HTTP / SOCKS5 代理地址，例如 http://127.0.0.1:7890");
 export const proxySettingsSchema = z.discriminatedUnion("mode", [
-  z.object({ mode: z.literal("system") }),
-  z.object({ mode: z.literal("manual"), address: proxyAddressSchema }),
+  z.object({
+    mode: z.literal("system"),
+    mihomoGroup: z.string().min(1).max(256).optional(),
+  }),
+  z.object({
+    mode: z.literal("manual"),
+    address: proxyAddressSchema,
+    mihomoGroup: z.string().min(1).max(256).optional(),
+  }),
 ]);
 export type ProxySettings = z.infer<typeof proxySettingsSchema>;
 export const enhancementVerificationSchema = z.object({
@@ -34,6 +41,8 @@ export const enhancementVerificationSchema = z.object({
 });
 export type EnhancementVerification = z.infer<typeof enhancementVerificationSchema>;
 export const proxyEnhancementStateSchema = z.object({
+  core: z.enum(["xray", "sing-box", "mihomo"]).optional(),
+  groups: z.array(z.string().max(256)).optional(),
   settings: proxySettingsSchema,
   phase: z.enum(["idle", "ready", "unavailable"]),
   endpoint: z.string(),

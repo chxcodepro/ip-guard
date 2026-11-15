@@ -26,7 +26,10 @@ const singProtocols = new Set([
   "tuic",
   "anytls",
 ]);
-export type NodeSnapshot = { engine: "xray" | "sing-box"; outbound: Record<string, unknown> };
+export type NodeSnapshot = {
+  engine: "xray" | "sing-box" | "mihomo";
+  outbound: Record<string, unknown>;
+};
 
 export function nodeServers(value: unknown): string[] {
   if (Array.isArray(value)) return value.flatMap(nodeServers);
@@ -64,7 +67,10 @@ function validateTree(value: unknown): void {
   }
 }
 
-export function snapshotV2rayNode(input: unknown): NodeSnapshot {
+export function snapshotV2rayNode(input: unknown): {
+  engine: "xray" | "sing-box";
+  outbound: Record<string, unknown>;
+} {
   const { outbounds } = configSchema.parse(input);
   const xray = outbounds.some((entry) => typeof entry.protocol === "string");
   const protocols = xray ? xrayProtocols : singProtocols;
@@ -99,6 +105,30 @@ export function snapshotV2rayNode(input: unknown): NodeSnapshot {
 
 export function coreConfiguration(node: NodeSnapshot, port: number): Record<string, unknown> {
   z.number().int().min(1024).max(65535).parse(port);
+  if (node.engine === "mihomo")
+    return {
+      "allow-lan": false,
+      "bind-address": "127.0.0.1",
+      ipv6: false,
+      mode: "rule",
+      "log-level": "silent",
+      "external-controller": "",
+      tun: { enable: false },
+      profile: { "store-selected": false, "store-fake-ip": false },
+      listeners: [{ name: "guard-http", type: "http", listen: "127.0.0.1", port, proxy: "fixed" }],
+      dns: {
+        enable: true,
+        ipv6: false,
+        "enhanced-mode": "redir-host",
+        "use-hosts": false,
+        "use-system-hosts": false,
+        "respect-rules": false,
+        nameserver: ["https://1.1.1.1/dns-query#fixed"],
+        "proxy-server-nameserver": ["https://1.1.1.1/dns-query#DIRECT"],
+      },
+      proxies: [{ ...node.outbound, name: "fixed", "ip-version": "ipv4" }],
+      rules: ["MATCH,fixed"],
+    };
   if (node.engine === "xray") {
     const stream = record.parse(node.outbound.streamSettings ?? {});
     const sockopt = record.parse(stream.sockopt ?? {});
@@ -176,4 +206,58 @@ export function coreConfiguration(node: NodeSnapshot, port: number): Record<stri
       final: "fixed",
     },
   };
+}
+
+export function snapshotMihomoNode(input: unknown): NodeSnapshot {
+  const node = record
+    .and(
+      z.object({
+        type: z.enum([
+          "ss",
+          "ssr",
+          "vmess",
+          "vless",
+          "trojan",
+          "socks5",
+          "http",
+          "hysteria",
+          "hysteria2",
+          "tuic",
+          "anytls",
+          "snell",
+        ]),
+        server: z.string().min(1),
+        port: z.number().int().min(1).max(65535),
+      }),
+    )
+    .parse(input);
+  const check = (value: unknown): void => {
+    if (Array.isArray(value)) {
+      for (const item of value) check(item);
+      return;
+    }
+    if (!value || typeof value !== "object") return;
+    for (const [key, item] of Object.entries(value)) {
+      if (["dialer-proxy", "ca", "certificate-path", "private-key-path"].includes(key) && item)
+        throw new Error("Mihomo 节点含链式代理或外部证书文件，请选择独立节点。");
+      if (
+        ["skip-cert-verify", "insecure", "allowInsecure"].includes(key) &&
+        item !== false &&
+        item !== undefined &&
+        item !== null
+      )
+        throw new Error("Mihomo 专用出口要求验证 TLS 证书，请使用布尔值 false。");
+      if (
+        key === "plugin" &&
+        item &&
+        !["obfs", "v2ray-plugin", "shadow-tls", "restls"].includes(String(item))
+      )
+        throw new Error("当前 Mihomo 插件类型暂待适配。");
+      check(item);
+    }
+  };
+  check(node);
+  const outbound = structuredClone(node);
+  delete outbound.name;
+  return { engine: "mihomo", outbound };
 }

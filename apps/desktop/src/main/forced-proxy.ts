@@ -2,7 +2,7 @@ import { execFile, spawn } from "node:child_process";
 import type { ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { constants } from "node:fs";
-import { copyFile, mkdir, readFile, realpath, rmdir, stat, unlink } from "node:fs/promises";
+import { copyFile, mkdir, readFile, realpath, rm, stat } from "node:fs/promises";
 import { createConnection, createServer, isIP } from "node:net";
 import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
@@ -12,15 +12,27 @@ import { z } from "zod";
 
 import { publicIPv4Schema } from "@ip-guard/electron";
 
-import { coreConfiguration, snapshotV2rayNode, nodeServers } from "./egress-config.ts";
+import {
+  coreConfiguration,
+  snapshotV2rayNode,
+  nodeServers,
+  snapshotMihomoNode,
+} from "./egress-config.ts";
 import type { NodeSnapshot } from "./egress-config.ts";
 import { guardDataDirectory } from "./guard-data.ts";
 import { nativePath } from "./guardian.ts";
+import { mihomoReservedPorts, parseMihomoProfile } from "./mihomo-config.ts";
+import { MihomoResolver } from "./mihomo.ts";
 import type { ProxyEndpoint } from "./proxy-tunnel.ts";
 
 const execute = promisify(execFile);
-const sourceSchema = z.object({ executable: z.string(), config: z.string() });
-const ownerSchema = z.object({ executable: z.string().min(1) });
+const sourceSchema = z.object({
+  executable: z.string(),
+  config: z.string(),
+  home: z.string().optional(),
+  pid: z.number().int().positive(),
+});
+const ownerSchema = z.object({ executable: z.string().min(1), pid: z.number().int().positive() });
 const inboundsSchema = z.object({
   inbounds: z.array(
     z.object({
@@ -31,13 +43,52 @@ const inboundsSchema = z.object({
     }),
   ),
 });
+export function inboundPorts(input: unknown): number[] {
+  const config = z
+    .object({
+      inbounds: z.array(z.record(z.string(), z.unknown())).default([]),
+    })
+    .parse(input);
+  return [
+    ...new Set(
+      config.inbounds
+        .flatMap((entry) => [entry.port, entry.listen_port])
+        .flatMap((value) => {
+          const port = typeof value === "string" && /^\d+$/u.test(value) ? Number(value) : value;
+          return typeof port === "number" && Number.isInteger(port) && port > 0 && port <= 65535
+            ? [port]
+            : [];
+        }),
+    ),
+  ];
+}
 const discovery = String.raw`
 $ErrorActionPreference='Stop'
 [Console]::OutputEncoding=[Text.UTF8Encoding]::new($false)
 $port=[int]$env:IPGUARD_PROXY_PORT
-if($port -eq 0) {
+if($env:IPGUARD_CONTROLLER_PIPE) {
+  if(-not $env:IPGUARD_CONTROLLER_PIPE.StartsWith('\\.\pipe\',[StringComparison]::OrdinalIgnoreCase)){throw 'Local controller pipe required'}
+  Add-Type -TypeDefinition @'
+using System;
+using System.ComponentModel;
+using System.Runtime.InteropServices;
+using Microsoft.Win32.SafeHandles;
+public static class IPGuardPipeOwner {
+  [DllImport("kernel32.dll",CharSet=CharSet.Unicode,SetLastError=true)] static extern SafeFileHandle CreateFile(string name,uint access,uint share,IntPtr security,uint creation,uint flags,IntPtr template);
+  [DllImport("kernel32.dll",SetLastError=true)] static extern bool GetNamedPipeServerProcessId(SafeFileHandle pipe,out uint pid);
+  public static uint Read(string path) {
+    using(var pipe=CreateFile(path,0xc0000000,0,IntPtr.Zero,3,0,IntPtr.Zero)) {
+      if(pipe.IsInvalid) throw new Win32Exception(Marshal.GetLastWin32Error());
+      uint pid;if(!GetNamedPipeServerProcessId(pipe,out pid)) throw new Win32Exception(Marshal.GetLastWin32Error());return pid;
+    }
+  }
+}
+'@
+  $id=[IPGuardPipeOwner]::Read($env:IPGUARD_CONTROLLER_PIPE)
+  $process=Get-CimInstance Win32_Process -Filter ('ProcessId='+[int]$id)
+} elseif($port -eq 0) {
   $own=Join-Path $env:LOCALAPPDATA 'IPGuard\egress\'
-  $cores=@(Get-CimInstance Win32_Process -Filter "Name='xray.exe' OR Name='sing-box.exe' OR Name='mihomo.exe' OR Name='clash-meta.exe' OR Name='clash.exe'" | Where-Object {$_.ExecutablePath -and -not $_.ExecutablePath.StartsWith($own,[StringComparison]::OrdinalIgnoreCase)})
+  $cores=@(Get-CimInstance Win32_Process -Filter "Name='xray.exe' OR Name='sing-box.exe' OR Name LIKE 'mihomo%.exe' OR Name='clash-meta.exe' OR Name='clash.exe' OR Name LIKE 'verge-mihomo%.exe' OR Name='clash.meta.exe'" | Where-Object {$_.ExecutablePath -and -not $_.ExecutablePath.StartsWith($own,[StringComparison]::OrdinalIgnoreCase)})
   if($cores.Count -ne 1) {throw 'One running proxy core is required without a system proxy port'}
   $process=$cores[0]
 } else {
@@ -46,7 +97,19 @@ if($port -eq 0) {
   $process=Get-CimInstance Win32_Process -Filter ('ProcessId='+[int]$ids[0])
 }
 if($env:IPGUARD_EXPECTED_IMAGE) {
-  @{executable=$process.ExecutablePath} | ConvertTo-Json -Compress
+  @{executable=$process.ExecutablePath;pid=[int]$process.ProcessId} | ConvertTo-Json -Compress
+  exit 0
+}
+if($process.Name -match '^(mihomo(?:-.+)?|verge-mihomo(?:-.+)?|clash(?:-meta|\.meta)?)\.exe$') {
+  $f=[regex]::Matches($process.CommandLine,'(?i)(?:^|\s)-f(?:=|\s+)(?:"([^"]+)"|(\S+))')
+  $d=[regex]::Matches($process.CommandLine,'(?i)(?:^|\s)-d(?:=|\s+)(?:"([^"]+)"|(\S+))')
+  if($f.Count -gt 1 -or $d.Count -gt 1) {throw 'Ambiguous Mihomo configuration'}
+  $home=if($d.Count -eq 1){if($d[0].Groups[1].Success){$d[0].Groups[1].Value}else{$d[0].Groups[2].Value}}else{''}
+  if($home -and $home -notmatch '^[A-Za-z]:[\\/]'){throw 'Mihomo home must be a local absolute path'}
+  $file=if($f.Count -eq 1){if($f[0].Groups[1].Success){$f[0].Groups[1].Value}else{$f[0].Groups[2].Value}}elseif($home){Join-Path $home 'config.yaml'}else{throw 'Explicit Mihomo configuration required'}
+  if($file -notmatch '^[A-Za-z]:[\\/]'){throw 'Mihomo -f must use a local absolute path; relative files depend on the process working directory'}
+  if(-not (Test-Path -LiteralPath $file -PathType Leaf)){throw 'Mihomo configuration missing'}
+  @{executable=$process.ExecutablePath;config=[IO.Path]::GetFullPath($file);home=$home;pid=[int]$process.ProcessId}|ConvertTo-Json -Compress
   exit 0
 }
 if($process.Name -notin @('xray.exe','sing-box.exe')) { throw 'Unsupported proxy core' }
@@ -63,12 +126,25 @@ else {
 }
 $config=@($candidates | Where-Object {Test-Path -LiteralPath $_ -PathType Leaf})
 if($config.Count -ne 1) { throw 'Active configuration cannot be resolved' }
-@{executable=$process.ExecutablePath;config=[IO.Path]::GetFullPath($config[0])} | ConvertTo-Json -Compress
+@{executable=$process.ExecutablePath;config=[IO.Path]::GetFullPath($config[0]);pid=[int]$process.ProcessId} | ConvertTo-Json -Compress
 `;
 
 export type ProxySource = { executable: string; config: string; node: NodeSnapshot; key: string };
-export function automaticNode(input: unknown, engine: "xray" | "sing-box") {
-  const node = snapshotV2rayNode(input);
+export function proxyEngine(executable: string): NodeSnapshot["engine"] | undefined {
+  const name = path.win32
+    .basename(path.basename(executable))
+    .toLowerCase()
+    .replace(/\.exe$/u, "");
+  return name === "xray"
+    ? "xray"
+    : name === "sing-box"
+      ? "sing-box"
+      : /^(mihomo(?:-.+)?|verge-mihomo(?:-.+)?|clash(?:-meta|\.meta)?)$/u.test(name)
+        ? "mihomo"
+        : undefined;
+}
+export function automaticNode(input: unknown, engine: NodeSnapshot["engine"]) {
+  const node = engine === "mihomo" ? snapshotMihomoNode(input) : snapshotV2rayNode(input);
   if (node.engine !== engine) throw new Error("代理核心与运行配置的类型不一致");
   const servers = nodeServers(node.outbound);
   if (
@@ -84,6 +160,18 @@ export function automaticNode(input: unknown, engine: "xray" | "sing-box") {
   return node;
 }
 export class ForcedProxy {
+  private readonly mihomo = new MihomoResolver();
+  private controlOwner = { key: "", checkedAt: 0 };
+  get core() {
+    return this.metadata ? proxyEngine(this.metadata.executable) : undefined;
+  }
+  get groups() {
+    return this.mihomo.groups;
+  }
+  private declaredPorts: number[] = [];
+  get reservedPorts() {
+    return this.core === "mihomo" ? this.mihomo.reservedPorts : this.declaredPorts;
+  }
   private metadata: z.infer<typeof sourceSchema> | undefined;
   private metadataPort = 0;
   private discoveredAt = 0;
@@ -100,6 +188,7 @@ export class ForcedProxy {
     return Boolean(this.child || this.folder);
   }
   forget() {
+    this.mihomo.forget();
     this.cached = undefined;
     this.sourceStamp = "";
   }
@@ -113,7 +202,12 @@ export class ForcedProxy {
           windowsHide: true,
           timeout: 6000,
           maxBuffer: 8192,
-          env: { ...process.env, IPGUARD_PROXY_PORT: "0", IPGUARD_EXPECTED_IMAGE: "" },
+          env: {
+            ...process.env,
+            IPGUARD_PROXY_PORT: "0",
+            IPGUARD_EXPECTED_IMAGE: "",
+            IPGUARD_CONTROLLER_PIPE: "",
+          },
         },
       );
       const input: unknown = JSON.parse(stdout.replace(/^\uFEFF/, ""));
@@ -124,7 +218,27 @@ export class ForcedProxy {
       if (!file.isFile() || file.size > 1048576) throw new Error("Invalid configuration size");
       const text = await readFile(metadata.config, "utf8");
       if (Buffer.byteLength(text, "utf8") > 1048576) throw new Error("Invalid configuration size");
+      if (proxyEngine(metadata.executable) === "mihomo") {
+        const profile = parseMihomoProfile(text);
+        this.mihomo.reservedPorts = mihomoReservedPorts(profile);
+        for (const field of ["mixed-port", "port", "socks-port"]) {
+          const parsed = z.number().int().min(1).max(65535).safeParse(profile[field]);
+          if (parsed.success) {
+            this.metadata = metadata;
+            this.metadataPort = parsed.data;
+            this.discoveredAt = performance.now();
+            this.entryAt = performance.now();
+            return (this.automaticEntry = {
+              host: "127.0.0.1",
+              port: parsed.data,
+              protocol: field === "socks-port" ? "socks5" : "http",
+            });
+          }
+        }
+        throw new Error("Mihomo 需开启标准 HTTP 或 SOCKS 入口");
+      }
       const value: unknown = JSON.parse(text);
+      this.declaredPorts = inboundPorts(value);
       const candidates = inboundsSchema
         .parse(value)
         .inbounds.filter((entry) =>
@@ -158,9 +272,9 @@ export class ForcedProxy {
   constructor(changed: () => void) {
     this.changed = changed;
   }
-  async source(upstream: ProxyEndpoint): Promise<ProxySource> {
+  async source(upstream: ProxyEndpoint, mihomoGroup?: string): Promise<ProxySource> {
     if (!["127.0.0.1", "localhost", "::1"].includes(upstream.host))
-      throw new Error("自动专用路由需连接本机 Xray / sing-box 核心；此代理来源尚待适配");
+      throw new Error("自动专用路由需连接本机 Xray / sing-box / Mihomo 核心；此代理来源尚待适配");
     if (
       !this.metadata ||
       this.metadataPort !== upstream.port ||
@@ -178,6 +292,7 @@ export class ForcedProxy {
               ...process.env,
               IPGUARD_PROXY_PORT: String(upstream.port),
               IPGUARD_EXPECTED_IMAGE: "",
+              IPGUARD_CONTROLLER_PIPE: "",
             },
           },
         );
@@ -187,36 +302,70 @@ export class ForcedProxy {
         this.discoveredAt = performance.now();
       } catch {
         throw new Error(
-          "尚未找到可自动管理的本机 Xray / sing-box 配置，增强保持暂停；其他代理工具需适配专用路由接口",
+          "尚未找到可自动管理的本机 Xray / sing-box / Mihomo 配置，增强保持暂停；请检查核心入口与文件配置",
         );
       }
     }
     const { executable, config } = this.metadata;
     if (![executable, config].every((file) => path.isAbsolute(file) && !file.startsWith("\\\\")))
       throw new Error("代理核心与配置须位于本机绝对路径");
-    const engine =
-      path.basename(executable).toLowerCase() === "xray.exe"
-        ? "xray"
-        : path.basename(executable).toLowerCase() === "sing-box.exe"
-          ? "sing-box"
-          : undefined;
+    const engine = proxyEngine(executable);
     if (!engine) throw new Error("代理核心类型尚待适配");
     const [file, binary] = await Promise.all([stat(config), stat(executable)]);
     if (!file.isFile() || file.size > 1048576 || !binary.isFile())
       throw new Error("运行配置或核心文件无效");
     const stamp = `${executable}|${config}|${file.size}|${file.mtimeMs}|${binary.size}|${binary.mtimeMs}`;
-    if (stamp === this.sourceStamp && this.cached) return this.cached;
+    if (engine !== "mihomo" && stamp === this.sourceStamp && this.cached) return this.cached;
     let node: NodeSnapshot;
-    try {
-      const text = await readFile(config, "utf8");
-      if (Buffer.byteLength(text, "utf8") > 1048576) throw new Error("运行配置过大");
-      const input: unknown = JSON.parse(text);
-      node = automaticNode(input, engine);
-    } catch {
-      throw new Error(
-        "当前节点配置无法安全建立专用路由，请使用独立节点及受支持的 Xray / sing-box 配置",
-      );
-    }
+    if (engine === "mihomo") {
+      const metadata = this.metadata;
+      const selected = await this.mihomo.read(metadata, mihomoGroup, async (controller) => {
+        const key =
+          metadata.pid +
+          ":" +
+          (controller.kind === "tcp" ? controller.port : controller.path.toLowerCase());
+        if (
+          key === this.controlOwner.key &&
+          performance.now() - this.controlOwner.checkedAt < 10000
+        )
+          return;
+        const { stdout } = await execute(
+          "powershell.exe",
+          ["-NoProfile", "-NonInteractive", "-Command", discovery],
+          {
+            windowsHide: true,
+            timeout: 6000,
+            maxBuffer: 8192,
+            env: {
+              ...process.env,
+              IPGUARD_PROXY_PORT: controller.kind === "tcp" ? String(controller.port) : "0",
+              IPGUARD_EXPECTED_IMAGE: executable,
+              IPGUARD_CONTROLLER_PIPE: controller.kind === "pipe" ? controller.path : "",
+            },
+          },
+        );
+        const owner = ownerSchema.parse(JSON.parse(stdout.replace(/^\uFEFF/, "")));
+        if (
+          owner.pid !== metadata.pid ||
+          (await realpath(owner.executable)).toLowerCase() !==
+            (await realpath(executable)).toLowerCase()
+        )
+          throw new Error("Mihomo 控制 API 的进程归属不匹配，未发送认证信息。");
+        this.controlOwner = { key, checkedAt: performance.now() };
+      });
+      node = automaticNode(selected.node, "mihomo");
+    } else
+      try {
+        const text = await readFile(config, "utf8");
+        if (Buffer.byteLength(text, "utf8") > 1048576) throw new Error("运行配置过大");
+        const input: unknown = JSON.parse(text);
+        this.declaredPorts = inboundPorts(input);
+        node = automaticNode(input, engine);
+      } catch {
+        throw new Error(
+          "当前节点配置无法安全建立专用路由，请使用独立节点及受支持的 Xray / sing-box 配置",
+        );
+      }
     this.sourceStamp = stamp;
     // Credentials stay in memory and the existing core's private stdin, never in logs or a new config file.
     return (this.cached = {
@@ -295,6 +444,7 @@ export class ForcedProxy {
                   ...process.env,
                   IPGUARD_PROXY_PORT: String(port),
                   IPGUARD_EXPECTED_IMAGE: this.image,
+                  IPGUARD_CONTROLLER_PIPE: "",
                 },
               },
             );
@@ -344,18 +494,15 @@ export class ForcedProxy {
         child.stdin?.end();
       });
     }
-    const image = this.image,
-      folder = this.folder;
+    const folder = this.folder;
+    if (folder) {
+      const root = path.resolve(guardDataDirectory(), "egress");
+      if (path.dirname(folder) !== root || !z.uuid().safeParse(path.basename(folder)).success)
+        throw new Error("专用通道清理路径无效，目录保留");
+      // Mihomo may create cache.db even when selected-node persistence is disabled.
+      await rm(folder, { recursive: true, force: true });
+    }
     this.image = "";
     this.folder = "";
-    if (image) {
-      try {
-        await unlink(image);
-      } catch (error) {
-        if (!error || typeof error !== "object" || Reflect.get(error, "code") !== "ENOENT")
-          throw error;
-      }
-    }
-    if (folder) await rmdir(folder);
   }
 }

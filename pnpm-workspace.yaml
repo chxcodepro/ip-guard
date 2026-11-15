@@ -46,6 +46,7 @@ catalog:
   electron: ^45.0.0
   electron-builder: ^26.15.3
   socks: 2.8.10
+  yaml: 2.9.1
 
 overrides:
   vite@*: "catalog:"

@@ -48,6 +48,7 @@ export class ProxyEnhancement {
     });
     this.networkPolicies.reserve("enhancement", [
       ...ports,
+      ...this.forced.reservedPorts,
       this.sourcePort,
       this.forced.endpoint?.port ?? 0,
     ]);
@@ -69,7 +70,12 @@ export class ProxyEnhancement {
     error: "",
   };
   get state(): ProxyEnhancementState {
-    return { ...this.upstream, verification: this.exit.state };
+    return {
+      ...this.upstream,
+      verification: this.exit.state,
+      core: this.forced.core,
+      groups: this.forced.groups,
+    };
   }
   private servers: Server[] = [];
   private sockets = new Set<Socket>();
@@ -202,7 +208,7 @@ export class ProxyEnhancement {
         this.forced.forget();
         const entry = await this.sourceEndpoint();
         if (!["127.0.0.1", "localhost", "::1"].includes(entry.host))
-          throw new Error("自动专用路由需指定本机 Xray / sing-box 入口");
+          throw new Error("自动专用路由需指定本机 Xray / sing-box / Mihomo 入口");
         this.upstream = {
           ...this.upstream,
           phase: "ready",
@@ -212,7 +218,12 @@ export class ProxyEnhancement {
         return;
       }
       if (!this.approved) throw new Error("请确认启用 Claude 专用路由；现有增强连接保持暂停");
-      const source = await this.forced.source(await this.sourceEndpoint());
+      const source = await this.forced.source(
+        await this.sourceEndpoint(),
+        this.upstream.settings.mihomoGroup,
+      );
+      this.reservePorts();
+      if (this.networkPolicies.error) throw new Error(this.networkPolicies.error);
       if (!this.forced.matches(source)) {
         this.disconnect();
         await this.forced.start(source);
@@ -242,6 +253,7 @@ export class ProxyEnhancement {
         error: error instanceof Error ? error.message : "当前代理不可用",
       };
     } finally {
+      this.reservePorts();
       if (previous !== `${this.upstream.phase}|${this.upstream.endpoint}|${this.upstream.error}`)
         this.onChange?.();
     }
