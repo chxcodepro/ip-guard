@@ -318,6 +318,7 @@ export class PosixGuard extends EventEmitter<{ snapshot: [Snapshot]; identity: [
     return this.snapshot;
   }
   async add(target: ProtectedApp) {
+    argumentWords(target.arguments);
     const resolved = await executablePath(target.path);
     if (this.data.apps.some((a) => a.path === resolved || a.id === target.id))
       throw new Error("该程序已添加");
@@ -398,6 +399,7 @@ export class PosixGuard extends EventEmitter<{ snapshot: [Snapshot]; identity: [
   ) {
     const target = this.target(id);
     if (!target.enabled) throw new Error("请先开启受管启动");
+    const args = argumentWords(target.arguments);
     const guarded =
       !isPosixCli(target.path) ||
       target.apiScope === "claude" ||
@@ -472,7 +474,7 @@ export class PosixGuard extends EventEmitter<{ snapshot: [Snapshot]; identity: [
     const granted = {
       sessionId,
       target,
-      args: argumentWords(target.arguments),
+      args,
       release,
     };
     return guarded

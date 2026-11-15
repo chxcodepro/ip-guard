@@ -17,8 +17,11 @@ if (!socketPath) throw new Error("IP Guard 启动入口缺少通信路径");
 const connection = createConnection(socketPath);
 let child: ReturnType<typeof spawn> | undefined,
   finished = false,
+  leaseLost = false,
+  granted = false,
   timer: ReturnType<typeof setTimeout> | undefined;
 const stop = () => {
+  if (timer) return;
   if (child?.pid && child.exitCode === null) {
     try {
       process.kill(-child.pid, "SIGTERM");
@@ -45,11 +48,17 @@ connection.once(
       .catch(() => connection.destroy()),
 );
 connection.on("error", () => {
+  leaseLost = true;
   console.error("IP Guard 尚未运行，请先打开桌面程序。");
   process.exitCode = 1;
   stop();
 });
 connection.on("close", () => {
+  leaseLost = true;
+  if (!finished) stop();
+});
+connection.on("end", () => {
+  leaseLost = true;
   if (!finished) stop();
 });
 createInterface({ input: connection }).on("line", (line) => {
@@ -61,7 +70,8 @@ createInterface({ input: connection }).on("line", (line) => {
       connection.end();
       return;
     }
-    if (child) throw new Error("重复的启动许可");
+    if (granted) throw new Error("重复的启动许可");
+    granted = true;
     const proxy = message.scope === "guarded" ? message.proxy : undefined;
     const env = proxy ? { ...process.env, ...proxyEnvironment(proxy) } : process.env;
     const settings = await sessionArguments(
@@ -70,6 +80,11 @@ createInterface({ input: connection }).on("line", (line) => {
       env,
       message.cli && Boolean(proxy),
     );
+    if (leaseLost || connection.destroyed) {
+      await settings.cleanup();
+      process.exitCode = 1;
+      return;
+    }
     let executable = message.path,
       args = settings.args;
     if (!message.cli && proxy)

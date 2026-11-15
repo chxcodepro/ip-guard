@@ -4,7 +4,7 @@ import { once } from "node:events";
 import { EventEmitter } from "node:events";
 import { chmod, mkdtemp, rm, writeFile, readFile } from "node:fs/promises";
 import { createServer } from "node:http";
-import { createConnection } from "node:net";
+import { createConnection, createServer as netServer } from "node:net";
 import os from "node:os";
 import path from "node:path";
 
@@ -280,6 +280,41 @@ describe.runIf(process.platform !== "win32")("POSIX managed sessions", () => {
     },
     15000,
   );
+  it("does not execute a late launch after the controller closes during settings preparation", async () => {
+    const client = path.resolve("apps/desktop/dist/posix/client.cjs"),
+      endpoint = path.join(folder, "revoked.sock"),
+      marker = path.join(folder, "must-not-run"),
+      executable = path.join(folder, "claude");
+    await writeFile(executable, `#!/bin/sh\nprintf executed > "$1"\n`);
+    await chmod(executable, 0o700);
+    const server = netServer((socket) =>
+      socket.once("data", () =>
+        socket.end(
+          JSON.stringify({
+            type: "launch",
+            path: executable,
+            args: [marker],
+            proxy: "http://127.0.0.1:12345",
+            scope: "guarded",
+            cli: true,
+          }) + "\n",
+        ),
+      ),
+    );
+    await new Promise<void>((resolve) => server.listen(endpoint, resolve));
+    const helper = spawn(process.execPath, [client, endpoint, randomUUID(), "--"], {
+      cwd: folder,
+      stdio: "ignore",
+    });
+    try {
+      const [code] = await once(helper, "exit");
+      expect(code).not.toBe(0);
+      await expect(readFile(marker)).rejects.toMatchObject({ code: "ENOENT" });
+    } finally {
+      if (helper.exitCode === null) helper.kill();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
   it("merges CLI settings in a private file and leaves the source unchanged", async () => {
     const original = path.join(folder, "original.json");
     const text = JSON.stringify({
