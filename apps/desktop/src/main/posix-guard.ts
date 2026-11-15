@@ -2,7 +2,6 @@ import { randomUUID } from "node:crypto";
 import { EventEmitter } from "node:events";
 import { createServer } from "node:net";
 import type { Server, Socket } from "node:net";
-import { networkInterfaces } from "node:os";
 import path from "node:path";
 
 import { z } from "zod";
@@ -23,6 +22,7 @@ import type { ClaudeIPv4Result, ProbeProgress } from "./claude-ip.ts";
 import { acceptHttpProxy, ProxyRequestError } from "./http-proxy.ts";
 import type { NetworkPolicies } from "./network-policies.ts";
 import { launcherPath } from "./posix-launch.ts";
+import { readPosixNetwork } from "./posix-network.ts";
 import {
   argumentWords,
   executablePath,
@@ -211,17 +211,8 @@ export class PosixGuard extends EventEmitter<{ snapshot: [Snapshot]; identity: [
     );
   }
   private async observeNetwork() {
-    const interfaces = networkInterfaces();
-    this.snapshot.networkAdapters = Object.entries(interfaces)
-      .filter(([, addresses]) => addresses?.some((a) => !a.internal))
-      .map(([name, addresses]) => ({
-        id: name,
-        name,
-        exists: true,
-        up: Boolean(addresses?.length),
-        ipv4: Boolean(addresses?.some((a) => a.family === "IPv4")),
-        error: "",
-      }));
+    const { interfaces, adapters } = await readPosixNetwork();
+    this.snapshot.networkAdapters = adapters;
     this.snapshot.watchedAdapter = this.snapshot.networkAdapters.find((n) =>
       this.data.adapterId ? n.id === this.data.adapterId : n.up && n.ipv4,
     ) ?? {
@@ -236,7 +227,7 @@ export class PosixGuard extends EventEmitter<{ snapshot: [Snapshot]; identity: [
       this.data.proxy.mode === "manual"
         ? this.data.proxy.address
         : await this.resolveProxy(this.data.settings.ipv4Url);
-    const fingerprint = JSON.stringify([interfaces, route]);
+    const fingerprint = JSON.stringify([interfaces, adapters, route]);
     if (this.network && this.network !== fingerprint) {
       this.pause("网络发生变化，正在复核 IPv4");
       void this.recheck();

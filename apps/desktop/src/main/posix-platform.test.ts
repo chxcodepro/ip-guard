@@ -6,6 +6,7 @@ import { describe, expect, it } from "vite-plus/test";
 import { vi } from "vite-plus/test";
 
 import { providerHint } from "../posix/provider.ts";
+import { macAdapters } from "./posix-network.ts";
 import {
   argumentWords,
   isPosixCli,
@@ -15,6 +16,16 @@ import {
 } from "./posix-platform.ts";
 
 describe("POSIX launch arguments", () => {
+  it("keeps a disconnected macOS adapter present even when it has no address", () => {
+    const adapters = macAdapters(
+      "lo0: flags=8049<UP,LOOPBACK,RUNNING> mtu 16384\nen0: flags=8863<UP,BROADCAST,RUNNING> mtu 1500\n status: inactive\nen1: flags=8863<UP,BROADCAST,RUNNING> mtu 1500\n status: active\n",
+      {},
+    );
+    expect(adapters).toMatchObject([
+      { id: "en0", exists: true, up: false, ipv4: false },
+      { id: "en1", exists: true, up: true },
+    ]);
+  });
   it("distinguishes known DeepSeek sessions and keeps hidden gateway aliases protected", async () => {
     const folder = await mkdtemp(path.join(os.tmpdir(), "ipguard-model-"));
     try {
