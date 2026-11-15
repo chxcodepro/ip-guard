@@ -1,9 +1,29 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { browserStateSchema, settingsSchema } from "./index.ts";
+import { browserStateSchema, claudeIpv4Endpoint, settingsSchema } from "./index.ts";
+import {
+  ipv4Attempts,
+  ipv4AttemptTimeoutMs,
+  ipv4IntervalSeconds,
+  ipv4ProbeTimeoutMs,
+  ipv4RetryDelayMs,
+} from "./ipv4-policy.ts";
+
+it("allows three full requests with two-second retry gaps within the round budget", () => {
+  expect(ipv4IntervalSeconds).toBe(5);
+  expect(ipv4RetryDelayMs).toBe(2000);
+  expect(ipv4AttemptTimeoutMs).toBe(4500);
+  expect(ipv4Attempts).toBe(3);
+  expect(ipv4ProbeTimeoutMs).toBe(20000);
+  expect(ipv4Attempts * ipv4AttemptTimeoutMs + (ipv4Attempts - 1) * ipv4RetryDelayMs).toBe(17500);
+});
 
 describe("IPv4 allowlist", () => {
-  const settings = { expectedIps: ["8.8.8.8", "1.1.1.1"], intervalSeconds: 2 };
+  const settings = {
+    expectedIps: ["8.8.8.8", "1.1.1.1"],
+    intervalSeconds: 2,
+    ipv4Url: claudeIpv4Endpoint,
+  };
   it("locks multiple public addresses and rejects invalid rules", () => {
     expect(settingsSchema.parse(settings)).toEqual(settings);
     for (const expectedIps of [

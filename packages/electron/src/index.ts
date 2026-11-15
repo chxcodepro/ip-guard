@@ -15,9 +15,18 @@ export type { CommandProtection } from "./command-protection.ts";
 import { extensionVersionSchema } from "./extension-version.ts";
 import { egressPolicySchema, egressStateSchema } from "./fixed-egress.ts";
 import { allowedIpsSchema, ipv4Attempts } from "./ipv4-policy.ts";
+import { claudeIpv4Endpoint, ipv4SourceUrlSchema } from "./ipv4-source.ts";
+export {
+  claudeIpv4Endpoint,
+  ipv4Sources,
+  ipv4SourceUrlSchema,
+  parseIpv4Response,
+} from "./ipv4-source.ts";
 export { egressPolicySchema } from "./fixed-egress.ts";
 export type { EgressPolicy, EgressState } from "./fixed-egress.ts";
 export {
+  ipv4IntervalSeconds,
+  ipv4RetryDelayMs,
   ipv4Attempts,
   ipv4AttemptTimeoutMs,
   ipv4ProbeTimeoutMs,
@@ -29,8 +38,8 @@ export { programProtectionStatus } from "./program-protection-status.ts";
 export { extensionVersionSchema, isNewerExtensionVersion } from "./extension-version.ts";
 export { claudeDesktopFamilies, isClaudeDesktopPath } from "./claude-desktop.ts";
 
-export const nativeVersion = "0.12.2";
-export const nativeProtocol = 18;
+export const nativeVersion = "0.12.3";
+export const nativeProtocol = 19;
 export const browserExtensionId = "blmgamidelconfabgilaacbkokomegep";
 export const browserHostName = "com.ipguard.browser";
 export const browserStateSchema = z
@@ -68,7 +77,6 @@ export const extensionStatusSchema = z.object({
   error: z.string(),
 });
 export type ExtensionStatus = z.infer<typeof extensionStatusSchema>;
-export const claudeIpv4Endpoint = "https://claude.ai/cdn-cgi/trace";
 
 export const desktopBridgeGlobal = "desktop";
 export const rendererHost = "app.localhost";
@@ -140,6 +148,7 @@ export const ipv6Schema = z.ipv6();
 export const settingsSchema = z.object({
   expectedIps: allowedIpsSchema.refine((ips) => ips.length > 0, "请至少填写一个公网 IPv4"),
   intervalSeconds: z.number().int().min(1).max(60),
+  ipv4Url: ipv4SourceUrlSchema.default(claudeIpv4Endpoint),
 });
 export const appSchema = z.object({
   id: z.uuid(),
@@ -195,7 +204,7 @@ export const snapshotSchema = z.object({
   probe: probeStateSchema,
   networkIssue: z.enum(["idle", "checking", "ip_changed", "ip_unavailable", "enforcement_failed"]),
   nativeVersion: z.literal(nativeVersion),
-  ipSource: z.literal(claudeIpv4Endpoint),
+  ipSource: ipv4SourceUrlSchema,
   currentIp: z.string(),
   adapter: z.string(),
   lastChecked: z.string(),
@@ -212,6 +221,7 @@ export const snapshotSchema = z.object({
   settings: z.object({
     expectedIps: allowedIpsSchema,
     intervalSeconds: z.number().int().min(1).max(60),
+    ipv4Url: ipv4SourceUrlSchema.default(claudeIpv4Endpoint),
   }),
   apps: z.array(appSchema.extend({ pathIssue: z.string(), isClaudeCode: z.boolean() })),
   logs: z.array(logSchema),
@@ -248,7 +258,7 @@ export const commandSchema = z.discriminatedUnion("action", [
   z.object({ action: z.literal("presets") }),
   z.object({ action: z.literal("desktop:relocate"), id: z.uuid() }),
   z.object({ action: z.literal("adapter:set"), adapterId: z.string().max(256) }),
-  z.object({ action: z.literal("ip:current") }),
+  z.object({ action: z.literal("ip:current"), sourceUrl: ipv4SourceUrlSchema }),
   z.object({ action: z.literal("claude:status") }),
   z.object({ action: z.literal("claude:stop") }),
   z.object({ action: z.literal("logs") }),

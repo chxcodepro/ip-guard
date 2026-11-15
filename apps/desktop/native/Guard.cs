@@ -86,7 +86,7 @@ namespace IpGuard {
                 driver=commandGuard.Status(config.commandProtection),commandBlockId=commandBlockId,commandBlockReason=commandBlockReason,commandBlockAppId=commandBlockAppId,
                 online = true,
                 admin = SystemPolicy.Admin, ready = healthy, currentIp = currentIp, adapter = NetworkProbe.Adapter,
-                checking=checking, networkIssue=networkIssue, nativeVersion=BuildInfo.Version, ipSource=BuildInfo.Endpoint,
+                checking=checking, networkIssue=networkIssue, nativeVersion=BuildInfo.Version, ipSource=config.settings.ipv4Url,
                 probe=new {round=probeRound,attempt=probeAttempt,phase=probePhase},
                 networkAdapters=adapters, watchedAdapter=watchedAdapter, networkAdapterId=config.networkAdapterId,
                 lastChecked = checkedAt, reason = reason, running = sessions.Where(s => !s.stopped && !s.otherModel).Select(s => s.appId).Distinct().ToArray(),
@@ -155,7 +155,6 @@ namespace IpGuard {
             Publish();
         }
         bool Check(Action<ProbeProgress> progress = null) {
-            DateTime started=DateTime.UtcNow;
             Interlocked.Exchange(ref checkRequested,0);
             int startEpoch,startNetwork; lock(state) {startEpoch=epoch;startNetwork=networkRevision;}
             lock(state) {
@@ -164,7 +163,7 @@ namespace IpGuard {
             }
             Publish();
             try {
-                ClaudeProbeResult result=probe.Read(item=>{
+                ClaudeProbeResult result=probe.Read(config.settings.ipv4Url,item=>{
                     if(item.step=="attempt") {
                         if(item.attempt<1 || item.attempt>BuildInfo.ProbeAttempts) throw new Exception("IPv4 检测次数无效。");
                         lock(state) probeAttempt=item.attempt;
@@ -206,7 +205,7 @@ namespace IpGuard {
             } catch(Exception e) {
                 lock(state) { checkedAt=DateTimeOffset.Now.ToString("o");probePhase="failed"; }
                 PauseNetwork("公网 IPv4 校验失败，已暂停联网 · "+e.GetBaseException().Message,"ip_unavailable");return false;
-            } finally { lock(state) {checking=false;if(probePhase=="checking") probePhase="failed";} nextCheck = Interlocked.Exchange(ref checkRequested,0)==1 ? DateTime.MinValue : started.AddSeconds(config.settings.intervalSeconds); Publish(); }
+            } finally { lock(state) {checking=false;if(probePhase=="checking") probePhase="failed";} nextCheck = Interlocked.Exchange(ref checkRequested,0)==1 ? DateTime.MinValue : DateTime.UtcNow.AddSeconds(config.settings.intervalSeconds); Publish(); }
         }
         Target Find(string id) {
             Target t = config.apps.SingleOrDefault(a => a.id == id);

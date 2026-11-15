@@ -6,6 +6,7 @@ import {
   browserExtensionId,
   claudeDesktopFamilies,
   claudeIpv4Endpoint,
+  ipv4IntervalSeconds,
   ipv4Attempts,
   ipv4ProbeTimeoutMs,
   maxAllowedIps,
@@ -31,6 +32,7 @@ namespace IpGuard { public static class BuildInfo {
  public const string ExtensionId = ${JSON.stringify(browserExtensionId)};
  public const int Protocol = ${nativeProtocol};
  public const string Endpoint = ${JSON.stringify(claudeIpv4Endpoint)};
+ public const int ProbeIntervalSeconds = ${ipv4IntervalSeconds};
  public const int ProbeTimeoutMs = ${ipv4ProbeTimeoutMs};
  public const int ProbeAttempts = ${ipv4Attempts};
  public const int MaxAllowedIps = ${maxAllowedIps};

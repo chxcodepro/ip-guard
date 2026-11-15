@@ -934,13 +934,12 @@ textarea::placeholder {
 .settings-block .rule-form .form-row {
   margin-bottom: 0;
 }
-.settings-block .rule-form .form-row:first-child,
+.settings-block .rule-form .form-row:not(.rule-interval),
 .settings-block .rule-form .form-error {
   grid-column: 1 / -1;
 }
 .settings-block .rule-form .form-footer {
   grid-column: 2;
-  grid-row: 2;
   align-self: end;
 }
 .settings-block .setting-row label > span {

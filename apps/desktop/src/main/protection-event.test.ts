@@ -40,7 +40,7 @@ const running: Snapshot = {
   networkAdapters: [],
   watchedAdapter: { id: "", name: "", exists: false, up: false, ipv4: false, error: "" },
   networkAdapterId: "",
-  settings: { expectedIps: ["8.8.8.8"], intervalSeconds: 2 },
+  settings: { expectedIps: ["8.8.8.8"], intervalSeconds: 2, ipv4Url: claudeIpv4Endpoint },
   logs: [],
   apps: [
     {

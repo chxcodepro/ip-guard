@@ -48,9 +48,11 @@ import {
   formatIPText,
   programProtectionStatus,
   isClaudeDesktopPath,
-  maxAllowedIps,
   initialCommandProtection,
   initialStartupStatus,
+  ipv4IntervalSeconds,
+  ipv4Sources,
+  ipv4SourceUrlSchema,
   nativeVersion,
   settingsSchema,
 } from "@ip-guard/electron";
@@ -103,7 +105,7 @@ const initial: Snapshot = {
   },
   networkAdapterId: "",
   rulesLocked: false,
-  settings: { expectedIps: [], intervalSeconds: 2 },
+  settings: { expectedIps: [], intervalSeconds: ipv4IntervalSeconds, ipv4Url: claudeIpv4Endpoint },
   apps: [],
   logs: [],
 };
@@ -197,19 +199,27 @@ function RuleForm({
   available: boolean;
   onLock: (settings: Settings) => Promise<void>;
   onUnlock: () => Promise<void>;
-  onFetch?: () => Promise<string>;
+  onFetch?: (sourceUrl: string) => Promise<string>;
 }) {
   const savedIps = settings.expectedIps.join("\n");
   const [draft, setDraft] = useState({
     expectedIps: savedIps,
     intervalSeconds: settings.intervalSeconds,
+    ipv4Url: settings.ipv4Url,
   });
+  const [customSource, setCustomSource] = useState(
+    !ipv4Sources.some((source) => source.url === settings.ipv4Url),
+  );
   const [error, setError] = useState("");
   const [fetching, setFetching] = useState(false);
-  useEffect(
-    () => setDraft({ expectedIps: savedIps, intervalSeconds: settings.intervalSeconds }),
-    [locked, savedIps, settings.intervalSeconds],
-  );
+  useEffect(() => {
+    setDraft({
+      expectedIps: savedIps,
+      intervalSeconds: settings.intervalSeconds,
+      ipv4Url: settings.ipv4Url,
+    });
+    setCustomSource(!ipv4Sources.some((source) => source.url === settings.ipv4Url));
+  }, [locked, savedIps, settings.intervalSeconds, settings.ipv4Url]);
   const submit = async (event: FormEvent) => {
     event.preventDefault();
     if (locked || fetching || busy || !available) return;
@@ -218,7 +228,7 @@ function RuleForm({
       expectedIps: [...new Set(draft.expectedIps.split(/[\s,，;；]+/u).filter(Boolean))],
     });
     if (!parsed.success) {
-      setError(`请填写 1–${maxAllowedIps} 个有效公网 IPv4 和 1–60 秒检测间隔。`);
+      setError(parsed.error.issues[0]?.message ?? "请检查防护规则");
       return;
     }
     setError("");
@@ -229,7 +239,10 @@ function RuleForm({
     setError("");
     setFetching(true);
     try {
-      const ip = await onFetch();
+      const source = ipv4SourceUrlSchema.safeParse(draft.ipv4Url);
+      if (!source.success)
+        throw new Error(source.error.issues[0]?.message ?? "请检查 IPv4 API 网址");
+      const ip = await onFetch(source.data);
       setDraft((current) => ({
         ...current,
         expectedIps: [
@@ -244,6 +257,44 @@ function RuleForm({
   };
   return (
     <form onSubmit={(event) => void submit(event)} className="rule-form">
+      <div className="form-row">
+        <label htmlFor="ipv4-source">IPv4 校验来源</label>
+        <select
+          id="ipv4-source"
+          value={customSource ? "custom" : draft.ipv4Url}
+          disabled={locked || busy || fetching}
+          onChange={(event) => {
+            const custom = event.target.value === "custom";
+            setCustomSource(custom);
+            setDraft({ ...draft, ipv4Url: custom ? "" : event.target.value });
+            setError("");
+          }}
+        >
+          {ipv4Sources.map((source) => (
+            <option key={source.url} value={source.url}>
+              {source.label}
+            </option>
+          ))}
+          <option value="custom">自定义 API</option>
+        </select>
+      </div>
+      {customSource && (
+        <div className="form-row">
+          <label htmlFor="ipv4-api-url">API 网址</label>
+          <input
+            id="ipv4-api-url"
+            type="url"
+            autoComplete="off"
+            spellCheck={false}
+            maxLength={2048}
+            readOnly={locked || busy || fetching}
+            placeholder="https://example.com/ip"
+            value={draft.ipv4Url}
+            onChange={(event) => setDraft({ ...draft, ipv4Url: event.target.value })}
+            required
+          />
+        </div>
+      )}
       <div className="form-row">
         <label htmlFor="expected-ip">允许的公网 IPv4</label>
         <div className="ipv4-fill-row">
@@ -273,7 +324,7 @@ function RuleForm({
           </button>
         </div>
       </div>
-      <div className="form-row">
+      <div className="form-row rule-interval">
         <label htmlFor="interval">检测间隔</label>
         <div className="input-unit">
           <input
@@ -656,13 +707,16 @@ export function GuardApp() {
     if (result?.snapshot && !result.cancelled) toast.success("已取消锁定，受保护程序已停止");
   };
   const fetchIPv4 = bridge
-    ? async () => {
-        const reply = await bridge.invoke({ action: "ip:current" });
+    ? async (sourceUrl: string) => {
+        const reply = await bridge.invoke({ action: "ip:current", sourceUrl });
         if (!reply.ipv4) throw new Error("未取得有效的公网 IPv4");
         return reply.ipv4;
       }
     : undefined;
   const title = nav.find((item) => item.id === page)?.label ?? "防护总览";
+  const sourceName =
+    ipv4Sources.find((source) => source.url === snapshot.ipSource)?.label.replace("（默认）", "") ??
+    "自定义 API";
   const addAction = (
     <button
       className="btn primary"
@@ -996,7 +1050,7 @@ export function GuardApp() {
                       <span className="network-icon">
                         <Network size={20} />
                       </span>
-                      Claude AI 出口 IPv4
+                      <span title={snapshot.ipSource}>{sourceName} · 出口 IPv4</span>
                       <button
                         type="button"
                         className="icon-btn"
@@ -1043,8 +1097,8 @@ export function GuardApp() {
                       <RefreshCw size={14} />
                       <span>
                         {snapshot.checking
-                          ? "正在获取 Claude AI IPv4"
-                          : `每 ${snapshot.settings.intervalSeconds} 秒检测`}
+                          ? "正在获取公网 IPv4"
+                          : `每轮结束后间隔 ${snapshot.settings.intervalSeconds} 秒`}
                       </span>
                     </div>
                     <div className="last-check">

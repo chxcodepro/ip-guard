@@ -5,12 +5,14 @@ using System.Linq;
 using System.Net;
 using System.Net.Sockets;
 using System.Text;
+using System.Text.RegularExpressions;
 using System.Web.Script.Serialization;
 
 namespace IpGuard {
     public sealed class Settings {
         public List<string> expectedIps = new List<string>();
-        public int intervalSeconds = 2;
+        public int intervalSeconds = BuildInfo.ProbeIntervalSeconds;
+        public string ipv4Url = BuildInfo.Endpoint;
     }
     public sealed class Target {
         public string id;
@@ -29,7 +31,7 @@ namespace IpGuard {
         public bool autostart;
         public bool rulesLocked;
         public bool commandProtection;
-        public string ipSource = "claude-ai";
+        public int probeTimingVersion=1;
         public string networkAdapterId="", networkAdapterName="";
     }
     public static class Data {
@@ -52,7 +54,7 @@ namespace IpGuard {
                 c.settings.expectedIps=ip=="" ? new List<string>() : new List<string> {ip};
             }
             bool legacyLock=!fields.ContainsKey("rulesLocked");
-            bool migrate=legacyIp || legacyLock || !fields.ContainsKey("ipSource");
+            bool migrate=legacyIp || legacyLock || !settings.ContainsKey("ipv4Url") || fields.ContainsKey("ipSource");
             var originalApps=fields["apps"] as System.Collections.IList;
             if(originalApps==null || originalApps.Count!=c.apps.Count) throw new Exception("程序列表格式无效。");
             for(int i=0;i<c.apps.Count;i++) {
@@ -61,15 +63,24 @@ namespace IpGuard {
                 if(!original.ContainsKey("apiScope")) {c.apps[i].apiScope=c.apps[i].enabled ? "claude" : "auto";migrate=true;}
             }
             if (legacyLock) c.rulesLocked = c.settings.expectedIps!=null && c.settings.expectedIps.Count>0;
-            if(c.ipSource!="claude-ai") throw new Exception("IP 来源配置无效，请恢复配置备份。");
             Validate(c.settings,!c.rulesLocked);
             if(c.egress!=null) c.egress.Validate();
             foreach (Target t in c.apps) Validate(t, false);
             if (c.apps.Select(t => t.id).Distinct(StringComparer.OrdinalIgnoreCase).Count() != c.apps.Count) throw new Exception("配置中有重复程序。");
             migrate=MigrateModelTest(c,fields) || migrate;
             migrate=MigrateEnhancement(c,originalApps) || migrate;
+            migrate=MigrateProbeTiming(c,fields) || migrate;
             if (migrate) Save(c);
             return c;
+        }
+        internal static bool MigrateProbeTiming(Config config,Dictionary<string,object> fields) {
+            object version;
+            if(fields.TryGetValue("probeTimingVersion",out version)) {
+                if(!(version is int) || (int)version!=1) throw new Exception("检测节奏配置版本无效，请恢复配置备份。");
+                return false;
+            }
+            config.settings.intervalSeconds=BuildInfo.ProbeIntervalSeconds;
+            return true;
         }
         internal static bool MigrateModelTest(Config config,Dictionary<string,object> fields) {
             object previous;if(!fields.TryGetValue("protectAllModels",out previous)) return false;
@@ -117,6 +128,11 @@ namespace IpGuard {
             if(s.expectedIps==null || (!allowEmpty && s.expectedIps.Count==0) || s.expectedIps.Count>BuildInfo.MaxAllowedIps || s.expectedIps.Any(ip=>!PublicV4(ip))) throw new Exception("请填写 1–"+BuildInfo.MaxAllowedIps+" 个有效的公网 IPv4 地址。");
             if(s.expectedIps.Distinct().Count()!=s.expectedIps.Count) throw new Exception("允许的公网 IPv4 地址有重复项。");
             if (s.intervalSeconds < 1 || s.intervalSeconds > 60) throw new Exception("检测间隔应为 1–60 秒。");
+            Uri source;
+            if(String.IsNullOrWhiteSpace(s.ipv4Url) || s.ipv4Url.Length>2048 || !Uri.TryCreate(s.ipv4Url,UriKind.Absolute,out source) || source.Scheme!="https" || source.UserInfo!="" || s.ipv4Url.Contains("#")) throw new Exception("请使用公开 HTTPS API 网址，去掉账号、密码或锚点。");
+            string host=source.DnsSafeHost.TrimEnd('.');
+            if(source.HostNameType==UriHostNameType.IPv4 ? !PublicV4(host) : source.HostNameType!=UriHostNameType.Dns || !Regex.IsMatch(host,@"^[a-zA-Z0-9-]+(?:\.[a-zA-Z0-9-]+)+$") || host.EndsWith(".localhost",StringComparison.OrdinalIgnoreCase) || host.EndsWith(".local",StringComparison.OrdinalIgnoreCase) || host.EndsWith(".internal",StringComparison.OrdinalIgnoreCase)) throw new Exception("请选择公开 IPv4 API 网址。");
+            s.ipv4Url=source.AbsoluteUri;
         }
         public static void Validate(Target t, bool exists) {
             Guid id;

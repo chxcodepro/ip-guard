@@ -7,6 +7,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import { z } from "zod";
 
 import type { CoffeeMetric, CoffeeReport } from "@ip-guard/electron";
+import { claudeIpv4Endpoint } from "@ip-guard/electron";
 
 import type { ClaudeIPv4, ClaudeIPv4Result } from "#src/main/claude-ip.ts";
 
@@ -79,6 +80,7 @@ export class CoffeeDiagnostics extends EventEmitter<{ update: [CoffeeReport] }> 
     claude.on("update", (result) => this.applyClaude(result));
   }
   private applyClaude(result: ClaudeIPv4Result) {
+    if (result.sourceUrl !== claudeIpv4Endpoint) return;
     const changed = this.report.claudeIp !== result.ip;
     this.report.claudeIp = result.ip;
     const exits = this.report.groups.find((group) => group.id === "exits");
@@ -209,7 +211,7 @@ export class CoffeeDiagnostics extends EventEmitter<{ update: [CoffeeReport] }> 
       phase: "running",
       checkedAt: "",
       error: "",
-      claudeIp: this.claude.latest?.ip ?? "",
+      claudeIp: this.claude.latest(claudeIpv4Endpoint)?.ip ?? "",
       claudeTimezone: "",
       groups: [],
     };
@@ -558,7 +560,7 @@ export class CoffeeDiagnostics extends EventEmitter<{ update: [CoffeeReport] }> 
     }
   }
   private async collect() {
-    const claude = this.claude.check().then((result) => {
+    const claude = this.claude.check(claudeIpv4Endpoint).then((result) => {
       this.collectingIp = result.ip;
       this.applyClaude(result);
       return result.ip;

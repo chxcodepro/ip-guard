@@ -4,7 +4,7 @@ using System.Threading;
 
 namespace IpGuard {
     public sealed class ClaudeProbeResult {
-        public string ip,error,checkedAt,adapter;
+        public string ip,error,checkedAt,adapter,sourceUrl;
     }
     public sealed class ClaudeProbe {
         sealed class Pending {
@@ -17,18 +17,19 @@ namespace IpGuard {
         readonly Action<object> emit;
         bool stopped;
         public ClaudeProbe(Action<object> emit) { this.emit=emit; }
-        public ClaudeProbeResult Read(Action<ProbeProgress> progress) {
+        public ClaudeProbeResult Read(string sourceUrl,Action<ProbeProgress> progress) {
             string id=Guid.NewGuid().ToString("D"); Pending request=new Pending { progress=progress };
-            lock(sync) { if(stopped) throw new Exception("Claude 出口检测服务正在退出。"); pending.Add(id,request); }
+            lock(sync) { if(stopped) throw new Exception("公网 IPv4 检测服务正在退出。"); pending.Add(id,request); }
             try {
-                emit(new { type="probe",id=id });
-                if(!request.signal.Wait(BuildInfo.ProbeTimeoutMs)) throw new Exception("Claude AI 出口 IPv4 检测服务未响应。");
+                emit(new { type="probe",id=id,sourceUrl=sourceUrl });
+                if(!request.signal.Wait(BuildInfo.ProbeTimeoutMs)) throw new Exception("公网 IPv4 检测服务未响应。");
                 ClaudeProbeResult result=request.result;
-                if(result==null) throw new Exception("Claude AI 出口 IPv4 检测已取消。");
+                if(result==null) throw new Exception("公网 IPv4 检测已取消。");
+                if(!String.Equals(result.sourceUrl,sourceUrl,StringComparison.Ordinal)) throw new Exception("IPv4 检测来源已变化，请重新检测。");
                 if(!String.IsNullOrEmpty(result.error)) throw new Exception(result.error);
-                if(!Data.PublicV4(result.ip)) throw new Exception("Claude AI 出口未返回有效公网 IPv4。");
+                if(!Data.PublicV4(result.ip)) throw new Exception("所选接口未返回有效公网 IPv4。");
                 DateTimeOffset checkedAt;
-                if(!DateTimeOffset.TryParse(result.checkedAt,out checkedAt) || (DateTimeOffset.UtcNow-checkedAt).TotalSeconds>8 || checkedAt>DateTimeOffset.UtcNow.AddSeconds(1)) throw new Exception("Claude AI 出口 IPv4 检测结果已过期。");
+                if(!DateTimeOffset.TryParse(result.checkedAt,out checkedAt) || (DateTimeOffset.UtcNow-checkedAt).TotalSeconds>8 || checkedAt>DateTimeOffset.UtcNow.AddSeconds(1)) throw new Exception("公网 IPv4 检测结果已过期。");
                 return result;
             } finally {
                 lock(sync) pending.Remove(id);

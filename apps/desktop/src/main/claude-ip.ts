@@ -5,19 +5,22 @@ import { session } from "electron";
 import type { Session } from "electron";
 
 import {
-  claudeIpv4Endpoint,
   ipv4Attempts,
   ipv4AttemptTimeoutMs,
   ipv4ProbeTimeoutMs,
-  publicIPv4Schema,
+  ipv4RetryDelayMs,
+  ipv4SourceUrlSchema,
+  parseIpv4Response,
 } from "@ip-guard/electron";
 
-export type ProbeProgress = {
+type ProbeStep = {
   label: string;
   status: string;
   detail: string;
 } & ({ step: "attempt"; attempt: number } | { step: "dns" | "ipv4" | "reconnect" });
+export type ProbeProgress = ProbeStep & { sourceUrl: string };
 export interface ClaudeIPv4Result {
+  sourceUrl: string;
   ip: string;
   error: string;
   checkedAt: string;
@@ -30,7 +33,7 @@ async function bounded<T>(work: Promise<T>, signal: AbortSignal): Promise<T> {
   signal.throwIfAborted();
   let cancel: (() => void) | undefined;
   const aborted = new Promise<never>((_resolve, reject) => {
-    cancel = () => reject(new Error("Claude 出口检测超时或已取消"));
+    cancel = () => reject(new Error("公网 IPv4 检测超时或已取消"));
     signal.addEventListener("abort", cancel, { once: true });
   });
   try {
@@ -48,11 +51,11 @@ export class ClaudeIPv4 extends EventEmitter<{
     super();
     this.partition = partition;
   }
-  latest: ClaudeIPv4Result | undefined;
-  steps: ProbeProgress[] = [];
-  private pending: Promise<ClaudeIPv4Result> | undefined;
+  private readonly results = new Map<string, ClaudeIPv4Result>();
+  private readonly progressBySource = new Map<string, ProbeProgress[]>();
+  private readonly pending = new Map<string, Promise<ClaudeIPv4Result>>();
   private abort = new AbortController();
-  private transport: Session | undefined;
+  private readonly transports = new Map<string, Session>();
   private route = new AbortController();
   private proxy: string | null | undefined = null;
   private proxyError = "固定出口暂不可用";
@@ -66,10 +69,10 @@ export class ClaudeIPv4 extends EventEmitter<{
     if (this.proxy === proxy) return;
     this.route.abort();
     this.route = new AbortController();
-    if (this.pending) await this.pending;
+    await Promise.all(this.pending.values());
     this.proxy = proxy;
-    if (this.transport)
-      await this.transport.setProxy(
+    for (const transport of this.transports.values())
+      await transport.setProxy(
         proxy === null
           ? { mode: "system" }
           : { mode: "fixed_servers", proxyRules: proxy, proxyBypassRules: "<-loopback>" },
@@ -81,31 +84,44 @@ export class ClaudeIPv4 extends EventEmitter<{
   useSystemProxy() {
     return this.selectProxy(null);
   }
-  private progress(value: ProbeProgress) {
-    const index = this.steps.findIndex((step) => step.step === value.step);
-    if (index < 0) this.steps.push(value);
-    else this.steps[index] = value;
-    this.emit("progress", value);
+  latest(sourceUrl: string) {
+    return this.results.get(sourceUrl);
   }
-  check(): Promise<ClaudeIPv4Result> {
-    if (this.pending) return this.pending;
-    this.steps = [];
-    this.pending = this.read()
+  steps(sourceUrl: string) {
+    return this.progressBySource.get(sourceUrl) ?? [];
+  }
+  private progress(sourceUrl: string, value: ProbeStep) {
+    const steps = this.steps(sourceUrl);
+    const progress = { ...value, sourceUrl };
+    const index = steps.findIndex((step) => step.step === value.step);
+    if (index < 0) steps.push(progress);
+    else steps[index] = progress;
+    this.emit("progress", progress);
+  }
+  check(input: string): Promise<ClaudeIPv4Result> {
+    const sourceUrl = ipv4SourceUrlSchema.parse(input);
+    const existing = this.pending.get(sourceUrl);
+    if (existing) return existing;
+    this.progressBySource.set(sourceUrl, []);
+    const pending = this.read(sourceUrl)
       .then((result) => {
-        this.latest = result;
+        this.results.set(sourceUrl, result);
         this.emit("update", result);
         return result;
       })
       .finally(() => {
-        this.pending = undefined;
+        this.pending.delete(sourceUrl);
       });
-    return this.pending;
+    this.pending.set(sourceUrl, pending);
+    return pending;
   }
   stop() {
     this.abort.abort();
   }
-  private async read(): Promise<ClaudeIPv4Result> {
+  private async read(sourceUrl: string): Promise<ClaudeIPv4Result> {
     const started = performance.now();
+    const progress = (value: ProbeStep) => this.progress(sourceUrl, value);
+    const hostname = new URL(sourceUrl).hostname;
     const lifetime = AbortSignal.any([
       this.abort.signal,
       this.route.signal,
@@ -115,10 +131,14 @@ export class ClaudeIPv4 extends EventEmitter<{
       adapter = "",
       retries = 0;
     try {
-      const fresh = !this.transport;
-      const transport = (this.transport ??= session.fromPartition(this.partition, {
-        cache: false,
-      }));
+      let transport = this.transports.get(sourceUrl);
+      const fresh = !transport;
+      if (!transport) {
+        transport = session.fromPartition(`${this.partition}-${this.transports.size}`, {
+          cache: false,
+        });
+        this.transports.set(sourceUrl, transport);
+      }
       if (fresh && typeof this.proxy === "string")
         await bounded(
           transport.setProxy({
@@ -134,7 +154,7 @@ export class ClaudeIPv4 extends EventEmitter<{
         const timer = setTimeout(() => attempt.abort(), ipv4AttemptTimeoutMs);
         try {
           signal.throwIfAborted();
-          this.progress({
+          progress({
             step: "attempt",
             label: "IPv4 检测",
             status: "running",
@@ -148,11 +168,11 @@ export class ClaudeIPv4 extends EventEmitter<{
             await bounded(transport.clearHostResolverCache(), signal);
             await bounded(transport.forceReloadProxyConfig(), signal);
           }
-          this.progress({ step: "dns", label: "DNS 解析", status: "running", detail: "claude.ai" });
-          const proxy = await bounded(transport.resolveProxy(claudeIpv4Endpoint), signal);
+          progress({ step: "dns", label: "DNS 解析", status: "running", detail: hostname });
+          const proxy = await bounded(transport.resolveProxy(sourceUrl), signal);
           adapter = this.proxy ? "受控代理通道" : proxy === "DIRECT" ? "系统直连" : "系统代理";
           if (proxy !== "DIRECT")
-            this.progress({
+            progress({
               step: "dns",
               label: "DNS 解析",
               status: "info",
@@ -161,10 +181,10 @@ export class ClaudeIPv4 extends EventEmitter<{
           else {
             try {
               const host = await bounded(
-                transport.resolveHost("claude.ai", { queryType: "A" }),
+                transport.resolveHost(hostname, { queryType: "A" }),
                 signal,
               );
-              this.progress({
+              progress({
                 step: "dns",
                 label: "DNS 解析",
                 status: "ok",
@@ -172,7 +192,7 @@ export class ClaudeIPv4 extends EventEmitter<{
               });
             } catch (error) {
               signal.throwIfAborted();
-              this.progress({
+              progress({
                 step: "dns",
                 label: "DNS 解析",
                 status: "unknown",
@@ -180,14 +200,14 @@ export class ClaudeIPv4 extends EventEmitter<{
               });
             }
           }
-          this.progress({
+          progress({
             step: "ipv4",
-            label: "Claude AI IPv4",
+            label: "公网 IPv4",
             status: "running",
             detail: adapter,
           });
           const response = await bounded(
-            transport.fetch(claudeIpv4Endpoint, {
+            transport.fetch(sourceUrl, {
               signal,
               cache: "no-store",
               redirect: "manual",
@@ -196,9 +216,9 @@ export class ClaudeIPv4 extends EventEmitter<{
             signal,
           );
           status = response.status;
-          if (status !== 200) throw new Error(`Claude 出口返回 HTTP ${status}`);
+          if (status !== 200) throw new Error(`IPv4 接口返回 HTTP ${status}`);
           const reader = response.body?.getReader();
-          if (!reader) throw new Error("Claude 出口响应为空");
+          if (!reader) throw new Error("IPv4 接口响应为空");
           const decoder = new TextDecoder();
           let body = "",
             bytes = 0;
@@ -207,25 +227,24 @@ export class ClaudeIPv4 extends EventEmitter<{
               const chunk = await bounded(reader.read(), signal);
               if (chunk.done) break;
               bytes += chunk.value.byteLength;
-              if (bytes > 32768) throw new Error("Claude 出口响应超过 32 KB");
+              if (bytes > 32768) throw new Error("IPv4 接口响应超过 32 KB");
               body += decoder.decode(chunk.value, { stream: true });
             }
             body += decoder.decode();
           } finally {
             void reader.cancel().catch(() => undefined);
           }
-          const ip = /^ip=([^\r\n]+)$/m.exec(body)?.[1]?.trim() ?? "";
-          if (!publicIPv4Schema.safeParse(ip).success)
-            throw new Error("Claude 出口未返回公网 IPv4，请确认代理提供 IPv4 出口");
+          const ip = parseIpv4Response(body);
           if (retries)
-            this.progress({
+            progress({
               step: "reconnect",
               label: "代理/网络",
               status: "ok",
               detail: "连接已恢复",
             });
-          this.progress({ step: "ipv4", label: "Claude AI IPv4", status: "ok", detail: ip });
+          progress({ step: "ipv4", label: "公网 IPv4", status: "ok", detail: ip });
           return {
+            sourceUrl,
             ip,
             error: "",
             checkedAt: new Date().toISOString(),
@@ -243,7 +262,7 @@ export class ClaudeIPv4 extends EventEmitter<{
           if (retries === ipv4Attempts - 1)
             throw new Error(`${ipv4Attempts} 次检测均未取得公网 IPv4 · ${detail}`);
           retries++;
-          this.progress({
+          progress({
             step: "reconnect",
             label: "IPv4 重试",
             status: "running",
@@ -251,7 +270,7 @@ export class ClaudeIPv4 extends EventEmitter<{
           });
           clearTimeout(timer);
           attempt.abort();
-          await delay(retries * 250, undefined, { signal: lifetime });
+          await delay(ipv4RetryDelayMs, undefined, { signal: lifetime });
         } finally {
           clearTimeout(timer);
           attempt.abort();
@@ -259,22 +278,23 @@ export class ClaudeIPv4 extends EventEmitter<{
       }
     } catch (error) {
       if (retries && !this.abort.signal.aborted)
-        this.progress({
+        progress({
           step: "reconnect",
           label: "代理/网络",
           status: "error",
           detail: "检测暂不可用",
         });
       const detail = this.abort.signal.aborted
-        ? "Claude 出口检测已取消"
+        ? "公网 IPv4 检测已取消"
         : this.proxy === undefined
           ? this.proxyError
           : lifetime.aborted
             ? "三次 IPv4 检测等待超时，请确认代理/网络已连接后重试"
             : error instanceof Error
               ? error.message
-              : "Claude 出口检测失败";
+              : "公网 IPv4 检测失败";
       return {
+        sourceUrl,
         ip: "",
         error: detail,
         checkedAt: new Date().toISOString(),

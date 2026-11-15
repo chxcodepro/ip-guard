@@ -8,7 +8,12 @@ import { app } from "electron";
 import { z } from "zod";
 
 import type { Snapshot } from "@ip-guard/electron";
-import { nativeProtocol, nativeVersion, snapshotSchema } from "@ip-guard/electron";
+import {
+  ipv4SourceUrlSchema,
+  nativeProtocol,
+  nativeVersion,
+  snapshotSchema,
+} from "@ip-guard/electron";
 
 import type { ClaudeIPv4, ProbeProgress } from "#src/main/claude-ip.ts";
 
@@ -20,6 +25,7 @@ const messageSchema = z.object({
   code: z.enum(["firewall_disabled", ""]).optional(),
   help: z.string().optional(),
   data: z.unknown().optional(),
+  sourceUrl: ipv4SourceUrlSchema.optional(),
   version: z.string().optional(),
   protocol: z.number().int().optional(),
   sid: z
@@ -118,7 +124,8 @@ export class Guardian extends EventEmitter {
             return;
           }
           if (message.type === "probe" && message.id) {
-            void this.probe(message.id);
+            if (!message.sourceUrl) throw new Error("原生 IPv4 检测请求缺少来源网址");
+            void this.probe(message.id, message.sourceUrl);
             return;
           }
           if (message.type === "fatal") {
@@ -188,15 +195,16 @@ export class Guardian extends EventEmitter {
       if (error && !this.stopping) this.fail(error.message);
     });
   }
-  private async probe(id: string) {
+  private async probe(id: string, sourceUrl: string) {
     const child = this.child;
     const progress = (data: ProbeProgress) => {
-      if (this.child === child) this.send({ action: "probe-progress", id, data });
+      if (this.child === child && data.sourceUrl === sourceUrl)
+        this.send({ action: "probe-progress", id, data });
     };
     this.claude.on("progress", progress);
     try {
-      const pending = this.claude.check();
-      for (const step of this.claude.steps) progress(step);
+      const pending = this.claude.check(sourceUrl);
+      for (const step of this.claude.steps(sourceUrl)) progress(step);
       const result = await pending;
       if (this.child === child) this.send({ action: "probe-result", id, data: result });
     } finally {

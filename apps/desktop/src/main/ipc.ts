@@ -71,7 +71,7 @@ export const setupIpc = (
       if (snapshot.egress) throw new Error("请先关闭历史独立出口，再使用当前代理增强");
       await claude.useFixedProxy(proxyEnhancement.probeAddress);
       const checked = await guardian.request("check");
-      if (!checked.ready) throw new Error(checked.reason || "Claude AI IPv4 尚未通过校验");
+      if (!checked.ready) throw new Error(checked.reason || "公网 IPv4 尚未通过校验");
       if (
         !(await proxyEnhancement.exit.check(
           checked.settings.expectedIps,
@@ -278,7 +278,7 @@ export const setupIpc = (
       }
     }
     if (command.action === "ip:current") {
-      const result = await claude.check();
+      const result = await claude.check(command.sourceUrl);
       if (!result.ip) throw new Error(result.error);
       return { ipv4: result.ip };
     }

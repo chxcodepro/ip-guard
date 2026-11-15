@@ -2,7 +2,13 @@ import { setTimeout as delay } from "node:timers/promises";
 
 import { session } from "electron";
 
-import { ipv4Attempts, ipv4AttemptTimeoutMs, publicIPv4Schema } from "@ip-guard/electron";
+import {
+  ipv4Attempts,
+  ipv4AttemptTimeoutMs,
+  ipv4IntervalSeconds,
+  ipv4RetryDelayMs,
+  publicIPv4Schema,
+} from "@ip-guard/electron";
 import type { EnhancementVerification } from "@ip-guard/electron";
 
 export const enhancementExitEndpoint = "https://myip.ipip.net/";
@@ -25,7 +31,7 @@ export class EnhancementExit {
   private abort = new AbortController();
   private generation = 0;
   private key = "";
-  private startedAt = 0;
+  private completedAt = 0;
   private stopped = false;
   private readonly changed: () => void;
   constructor(changed: () => void) {
@@ -43,7 +49,7 @@ export class EnhancementExit {
     this.abort.abort();
     this.abort = new AbortController();
     this.key = "";
-    this.startedAt = 0;
+    this.completedAt = 0;
     if (this.state.phase !== "idle" || this.state.reason !== reason)
       this.set({ phase: "idle", checkedAt: "", currentIp: "", reason });
   }
@@ -51,12 +57,11 @@ export class EnhancementExit {
     if (this.stopped) return Promise.resolve(false);
     const key = `${proxy}|${[...allowed].sort().join(",")}`;
     if (this.pending && key === this.key) return this.pending;
-    if (!force && key === this.key && Date.now() - this.startedAt < 5000)
+    if (!force && key === this.key && Date.now() - this.completedAt < ipv4IntervalSeconds * 1000)
       return Promise.resolve(this.ready);
     if (key !== this.key) this.invalidate();
     const previous = this.pending;
     this.key = key;
-    this.startedAt = Date.now();
     const generation = this.generation,
       signal = this.abort.signal;
     const pending = (async () => {
@@ -131,7 +136,7 @@ export class EnhancementExit {
               currentIp: "",
               reason: `增强出口复核 ${attempt}/${ipv4Attempts} 次未取得 IPv4，增强联网已暂停`,
             });
-            if (attempt < ipv4Attempts) await delay(250, undefined, { signal });
+            if (attempt < ipv4Attempts) await delay(ipv4RetryDelayMs, undefined, { signal });
           }
         }
       } catch {
@@ -145,7 +150,10 @@ export class EnhancementExit {
       }
       return false;
     })().finally(() => {
-      if (this.pending === pending) this.pending = undefined;
+      if (this.pending === pending) {
+        this.pending = undefined;
+        if (generation === this.generation) this.completedAt = Date.now();
+      }
     });
     this.pending = pending;
     return pending;

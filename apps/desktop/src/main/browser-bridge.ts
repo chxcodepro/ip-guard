@@ -41,8 +41,9 @@ export class BrowserBridge {
   private state(): BrowserState {
     const value = this.guardian.snapshot;
     // EXE enhancement can use a separate route; web authorization follows the unmodified system route.
-    const currentIp = this.systemProbe?.latest?.ip ?? "";
-    const checkedAt = this.systemProbe?.latest?.checkedAt ?? "";
+    const result = value ? this.systemProbe?.latest(value.settings.ipv4Url) : undefined;
+    const currentIp = result?.ip ?? "";
+    const checkedAt = result?.checkedAt ?? "";
     const checking = this.systemChecking;
     const base: BrowserState = {
       protocol: 1,
@@ -75,8 +76,7 @@ export class BrowserBridge {
       ...base,
       phase: checking && !currentIp ? "checking" : "blocked",
       reason:
-        this.systemProbe?.latest?.error ||
-        (currentIp ? "网页出口 IPv4 未命中允许列表" : "等待网页出口 IPv4 校验"),
+        result?.error || (currentIp ? "网页出口 IPv4 未命中允许列表" : "等待网页出口 IPv4 校验"),
     };
   }
   private listen(sid: string) {
@@ -140,12 +140,13 @@ export class BrowserBridge {
       !this.systemChecking
     ) {
       const probe = (this.systemProbe ??= new ClaudeIPv4("ip-guard-browser-ipv4"));
+      const latest = probe.latest(snapshot.settings.ipv4Url);
       if (
-        !probe.latest ||
-        Date.now() - Date.parse(probe.latest.checkedAt) >= snapshot.settings.intervalSeconds * 1000
+        !latest ||
+        Date.now() - Date.parse(latest.checkedAt) >= snapshot.settings.intervalSeconds * 1000
       ) {
         this.systemChecking = true;
-        void probe.check().finally(() => {
+        void probe.check(snapshot.settings.ipv4Url).finally(() => {
           if (this.systemProbe === probe) {
             this.systemChecking = false;
             this.publish();

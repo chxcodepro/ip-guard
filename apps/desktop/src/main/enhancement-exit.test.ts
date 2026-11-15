@@ -51,4 +51,27 @@ describe("enhancement exit proof", () => {
     expect(await pending).toBe(false);
     expect(proof.ready).toBe(false);
   });
+  it("waits five seconds after a slow query completes before polling again", async () => {
+    const proof = new EnhancementExit(() => undefined);
+    const clock = vi.spyOn(Date, "now").mockReturnValue(10000);
+    try {
+      transport.fetch.mockImplementationOnce(async () => {
+        clock.mockReturnValue(16000);
+        return new Response("当前 IP：8.8.8.8 来自于：测试地区");
+      });
+      transport.fetch.mockResolvedValueOnce(new Response("当前 IP：8.8.8.8 来自于：测试地区"));
+      await proof.check(["8.8.8.8"], "http://127.0.0.1:38401");
+      await proof.check(["8.8.8.8"], "http://127.0.0.1:38401");
+      expect(transport.fetch).toHaveBeenCalledTimes(1);
+      clock.mockReturnValue(20999);
+      await proof.check(["8.8.8.8"], "http://127.0.0.1:38401");
+      expect(transport.fetch).toHaveBeenCalledTimes(1);
+      clock.mockReturnValue(21000);
+      await proof.check(["8.8.8.8"], "http://127.0.0.1:38401");
+      expect(transport.fetch).toHaveBeenCalledTimes(2);
+    } finally {
+      clock.mockRestore();
+      proof.stop();
+    }
+  });
 });

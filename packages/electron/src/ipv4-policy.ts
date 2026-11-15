@@ -1,8 +1,10 @@
 import { z } from "zod";
 
+export const ipv4IntervalSeconds = 5;
+export const ipv4RetryDelayMs = 2000;
 export const ipv4AttemptTimeoutMs = 4500;
 export const ipv4Attempts = 3;
-export const ipv4ProbeTimeoutMs = 16000;
+export const ipv4ProbeTimeoutMs = 20000;
 export const maxAllowedIps = 32;
 export const publicIPv4Schema = z.ipv4().refine((value) => {
   const [a, b, c] = value.split(".").map(Number);

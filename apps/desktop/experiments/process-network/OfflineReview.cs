@@ -178,7 +178,7 @@ namespace IpGuard.ProcessNetwork {
         public static int Main(string[] args) {
             if(args.Length!=1 || args[0]!="--self-check") {Console.WriteLine("Offline Fort adapter. --self-check uses memory only; no driver or service access.");return 2;}
             try {
-                ProtocolCases();StateCases();RecoveryCases();BrowserRetirementCases();ModelCases();RetiredModelTestCases();EnhancementCases();ProxySettingsCases();
+                ProtocolCases();StateCases();RecoveryCases();BrowserRetirementCases();ModelCases();RetiredModelTestCases();EnhancementCases();ProxySettingsCases();ProbeTimingCases();Ipv4SourceCases();
                 Check(StartupPolicy.MissingTask(new FileNotFoundException()),"missing task mapped to a .NET file exception remains a missing-task result");
                 Check(StartupPolicy.MissingTask(new COMException("missing",unchecked((int)0x80070002))),"raw COM missing-task HRESULT remains supported");
                 Check(!StartupPolicy.MissingTask(new UnauthorizedAccessException()),"scheduler access denial stays a visible failure");
@@ -195,6 +195,27 @@ namespace IpGuard.ProcessNetwork {
                 Console.WriteLine("PASS: "+assertions+" offline assertions. No driver loaded or opened.");return 0;
             }
             catch(Exception error) {Console.Error.WriteLine(error);return 1;}
+        }
+        static void Ipv4SourceCases() {
+            Check(new Settings().ipv4Url=="https://claude.ai/cdn-cgi/trace","existing settings retain Claude as their default source");
+            foreach(string url in new[] {"https://api.ipify.org/?format=json","https://myip.ipip.net/","https://1.1.1.1/cdn-cgi/trace","https://example.com/ip"}) {
+                var settings=new Settings {expectedIps=new List<string> {"8.8.8.8"},ipv4Url=url};
+                Data.Validate(settings);Check(settings.ipv4Url==url,"chosen API survives native validation");
+            }
+            foreach(string url in new[] {"http://example.com/ip","https://user:pass@example.com/ip","https://127.0.0.1/ip","https://192.168.1.2/ip","https://router.local/ip","https://localhost/ip","https://example.com/ip#secret"})
+                Throws<Exception>(()=>Data.Validate(new Settings {expectedIps=new List<string> {"8.8.8.8"},ipv4Url=url}),"unsafe source URLs are rejected at the native boundary");
+        }
+        static void ProbeTimingCases() {
+            Check(new Settings().intervalSeconds==5,"new installations use a five-second polling interval");
+            foreach(int previous in new[] {2,8}) {
+                var config=new Config {rulesLocked=true,settings=new Settings {intervalSeconds=previous,expectedIps=new List<string> {"8.8.8.8"}}};
+                Check(Data.MigrateProbeTiming(config,new Dictionary<string,object>()) && config.settings.intervalSeconds==5,"deployed timing is changed once to the confirmed interval");
+                Check(config.rulesLocked && config.settings.expectedIps.SequenceEqual(new[] {"8.8.8.8"}),"timing migration preserves the locked allowlist");
+                config.settings.intervalSeconds=2;
+                Check(!Data.MigrateProbeTiming(config,new Dictionary<string,object> {{"probeTimingVersion",1}}) && config.settings.intervalSeconds==2,"later user timing choices survive repeated reads");
+            }
+            foreach(object invalid in new object[] {null,"1",0,2})
+                Throws<Exception>(()=>Data.MigrateProbeTiming(new Config(),new Dictionary<string,object> {{"probeTimingVersion",invalid}}),"unknown timing revisions are rejected");
         }
         static void EnhancementCases() {
             var legacy=new Config {commandProtection=true,apps=new List<Target> {new Target {enabled=true},new Target {enabled=false}}};
