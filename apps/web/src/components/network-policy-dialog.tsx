@@ -139,7 +139,7 @@ export function NetworkPolicyDialog({
                 <dd>{state?.scope === "managed_proxy" ? "当前代理 / 网络" : "专用代理"}</dd>
               </div>
               <div>
-                <dt>本机回环</dt>
+                <dt>本机回环默认</dt>
                 <dd>{state ? (state.loopbackDirect ? "直连" : "阻断") : "—"}</dd>
               </div>
               {state?.scope !== "managed_proxy" && (
