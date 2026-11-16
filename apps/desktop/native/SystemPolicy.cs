@@ -16,7 +16,8 @@ namespace IpGuard {
         public static int FixedProxyPort;
         public static int EnhancedProxyPort;
         public static bool KernelFilteringReady;
-        public static int[] LocalDevPorts=new int[0];
+        public static bool LoopbackDirect;
+        public static int[] LoopbackExceptionPorts=new int[0];
         public static readonly string Sid = WindowsIdentity.GetCurrent().User.Value;
         public static readonly string Owner = "IPGuard." + Sid;
         public static readonly string PipeName = "IPGuard-" + Sid;

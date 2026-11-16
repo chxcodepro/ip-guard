@@ -52,13 +52,19 @@ export function NetworkPolicyDialog({
   const update = (index: number, value: Partial<NetworkPolicy["rules"][number]>) => {
     setError("");
     setDraft((current) => ({
+      ...current,
       rules: current.rules.map((rule, i) => (i === index ? { ...rule, ...value } : rule)),
     }));
   };
-  const addRule = (host: string, port: number, action: NetworkPolicy["rules"][number]["action"]) => {
+  const addRule = (
+    host: string,
+    port: number,
+    action: NetworkPolicy["rules"][number]["action"],
+  ) => {
     const id = crypto.randomUUID();
     setFocusId(id);
     setDraft((current) => ({
+      ...current,
       rules: [...current.rules, { id, enabled: true, host, port, action }],
     }));
   };
@@ -133,8 +139,8 @@ export function NetworkPolicyDialog({
                 <dd>{state?.scope === "managed_proxy" ? "当前代理 / 网络" : "专用代理"}</dd>
               </div>
               <div>
-                <dt>其他本机端口</dt>
-                <dd>阻断</dd>
+                <dt>本机回环默认</dt>
+                <dd>{state ? (state.loopbackDirect ? "直连" : "阻断") : "—"}</dd>
               </div>
               {state?.scope !== "managed_proxy" && (
                 <div>
@@ -163,7 +169,7 @@ export function NetworkPolicyDialog({
                 <dd>
                   {state?.childProtection || state?.scope === "managed_proxy"
                     ? state.localPorts.length
-                      ? state.localPorts.join("、")
+                      ? `${state.loopbackDirect ? "阻断" : "放行"}：${state.localPorts.join("、")}`
                       : "无"
                     : "—"}
                 </dd>
@@ -180,6 +186,17 @@ export function NetworkPolicyDialog({
             )}
           </section>
           <section aria-labelledby="policy-rules-title">
+            <label className="policy-loopback-default">
+              <input
+                type="checkbox"
+                checked={draft.loopbackDirect}
+                disabled={busy || !state}
+                onChange={(event) =>
+                  setDraft((current) => ({ ...current, loopbackDirect: event.target.checked }))
+                }
+              />
+              本机回环默认直连
+            </label>
             <div className="policy-section-heading">
               <h3 id="policy-rules-title">
                 放行与阻断例外{dirty && <span className="policy-dirty">未保存</span>}
@@ -189,7 +206,7 @@ export function NetworkPolicyDialog({
                   type="button"
                   className="btn"
                   disabled={busy || !state || draft.rules.length >= 64}
-                  onClick={() => addRule("localhost", 0, "direct")}
+                  onClick={() => addRule("localhost", 0, draft.loopbackDirect ? "block" : "direct")}
                 >
                   <Plus size={14} />
                   本机端口
@@ -274,6 +291,7 @@ export function NetworkPolicyDialog({
                     disabled={busy || !state}
                     onClick={() =>
                       setDraft((current) => ({
+                        ...current,
                         rules: current.rules.filter((item) => item.id !== rule.id),
                       }))
                     }
@@ -282,7 +300,7 @@ export function NetworkPolicyDialog({
                   </button>
                 </div>
               ))}
-              {!draft.rules.length && <div className="policy-empty">无例外，使用默认拦截策略</div>}
+              {!draft.rules.length && <div className="policy-empty">无例外，使用默认策略</div>}
             </div>
           </section>
           {error && error !== state?.error && (

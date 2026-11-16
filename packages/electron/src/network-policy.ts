@@ -15,7 +15,7 @@ export function networkHost(value: string): string {
   }
   return ["localhost", "0.0.0.0", "::1"].includes(host) ||
     host.endsWith(".localhost") ||
-    /^127(?:\.\d{1,3}){3}$/u.test(host)
+    (host.startsWith("127.") && z.ipv4().safeParse(host).success)
     ? "localhost"
     : host;
 }
@@ -52,7 +52,10 @@ export const networkRuleSchema = z
     "本机服务请选择直连或阻断",
   );
 export const networkPolicySchema = z
-  .object({ rules: z.array(networkRuleSchema).max(64, "最多设置 64 条例外") })
+  .object({
+    loopbackDirect: z.boolean(),
+    rules: z.array(networkRuleSchema).max(64, "最多设置 64 条例外"),
+  })
   .superRefine((policy, context) => {
     const keys = new Set<string>();
     const ids = new Set<string>();
@@ -76,7 +79,7 @@ export const networkPolicySchema = z
   });
 export type NetworkPolicy = z.infer<typeof networkPolicySchema>;
 export type NetworkRule = z.infer<typeof networkRuleSchema>;
-export const initialNetworkPolicy: NetworkPolicy = { rules: [] };
+export const initialNetworkPolicy: NetworkPolicy = { loopbackDirect: true, rules: [] };
 export function networkAction(
   policy: NetworkPolicy,
   target: { host: string; port: number },
@@ -84,12 +87,17 @@ export function networkAction(
   const host = networkHost(target.host);
   return (
     policy.rules.find((rule) => rule.enabled && rule.host === host && rule.port === target.port)
-      ?.action ?? (host === "localhost" ? "block" : "proxy")
+      ?.action ?? (host === "localhost" ? (policy.loopbackDirect ? "direct" : "block") : "proxy")
   );
 }
-export function localPolicyPorts(policy: NetworkPolicy): number[] {
+export function localExceptionPorts(policy: NetworkPolicy): number[] {
   return policy.rules
-    .filter((rule) => rule.enabled && rule.host === "localhost" && rule.action === "direct")
+    .filter(
+      (rule) =>
+        rule.enabled &&
+        rule.host === "localhost" &&
+        rule.action === (policy.loopbackDirect ? "block" : "direct"),
+    )
     .map((rule) => rule.port)
     .sort((a, b) => a - b);
 }
@@ -101,11 +109,13 @@ export const networkPolicyStateSchema = z.object({
   programs: z.array(z.string()),
   error: z.string(),
   childProtection: z.boolean(),
+  loopbackDirect: z.boolean(),
   localPorts: z.array(z.number().int().min(1).max(65535)),
 });
 export type NetworkPolicyState = z.infer<typeof networkPolicyStateSchema>;
 export const kernelNetworkPolicySchema = z.object({
   revision: z.uuid(),
+  loopbackDirect: z.boolean(),
   localPorts: z.array(z.number().int().min(1).max(65535)).max(64),
 });
 export type KernelNetworkPolicy = z.infer<typeof kernelNetworkPolicySchema>;

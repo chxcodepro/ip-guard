@@ -28,7 +28,7 @@ export {
   networkRuleSchema,
   networkHost,
   networkAction,
-  localPolicyPorts,
+  localExceptionPorts,
 } from "./network-policy.ts";
 export type {
   NetworkPolicy,
@@ -59,7 +59,7 @@ export { extensionVersionSchema, isNewerExtensionVersion } from "./extension-ver
 export { claudeDesktopFamilies, isClaudeDesktopPath } from "./claude-desktop.ts";
 
 export const nativeVersion = "0.14.2";
-export const nativeProtocol = 20;
+export const nativeProtocol = 21;
 export const browserExtensionId = "blmgamidelconfabgilaacbkokomegep";
 export const browserHostName = "com.ipguard.browser";
 export const browserStateSchema = z

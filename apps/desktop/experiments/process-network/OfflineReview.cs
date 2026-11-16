@@ -30,7 +30,7 @@ namespace IpGuard.ProcessNetwork {
         static void Check(bool ok,string name) {assertions++;if(!ok) throw new Exception("FAIL: "+name);}
         static void Throws<T>(Action action,string name) where T:Exception {try {action();} catch(T) {assertions++;return;}throw new Exception("FAIL: "+name);}
         static EgressPolicy Egress() {return new EgressPolicy {id="ad31925c-d91b-4d91-953d-127bdce75d69",label="offline",port=23456};}
-        static FortPolicy Policy(params string[] paths) {return new FortPolicy(Egress(),paths.Length==0 ? new[] {@"C:\apps\claude.exe"} : paths);}
+        static FortPolicy Policy(params string[] paths) {return new FortPolicy(Egress(),paths.Length==0 ? new[] {@"C:\apps\claude.exe"} : paths,false,new int[0]);}
         static string Hex(byte[] bytes) {return BitConverter.ToString(bytes).Replace("-","").ToLowerInvariant();}
         static void ProtocolCases() {
             Check(FortPolicy.Validation().Code==0xd000b400 && Hex(FortPolicy.Validation().CopyPayload())=="4100","Fort ABI 65 validation request");
@@ -48,9 +48,9 @@ namespace IpGuard.ProcessNetwork {
             Check(BitConverter.ToUInt16(unicode,104)==32,"Unicode path length is bytes");
             foreach(string path in new[] {@"\\server\claude.exe",@"relative\claude.exe",@"C:\apps\*.exe",@"C:\apps\claude.cmd",@"C:\apps\claude.exe:payload"})
                 Throws<ArgumentException>(()=>Policy(path),"invalid root rejected");
-            Throws<ArgumentException>(()=>new FortPolicy(Egress(),new string[0]),"empty root list rejected");
+            Throws<ArgumentException>(()=>new FortPolicy(Egress(),new string[0],false,new int[0]),"empty root list rejected");
             EgressPolicy invalid=Egress();invalid.port=0;
-            Throws<Exception>(()=>new FortPolicy(invalid,new[] {@"C:\apps\claude.exe"}),"missing fixed proxy rejected");
+            Throws<Exception>(()=>new FortPolicy(invalid,new[] {@"C:\apps\claude.exe"},false,new int[0]),"missing fixed proxy rejected");
         }
         static void StateCases() {
             var device=new Device();var jobs=new Jobs();var gate=new List<bool>();
@@ -82,15 +82,15 @@ namespace IpGuard.ProcessNetwork {
             Check(!events.Last(),"configuration refusal keeps gate closed");
             var liveDevice=new Device();var liveJobs=new Jobs();var liveGate=new List<bool>();
             var live=new ProcessNetworkController(liveDevice,Policy(),liveJobs,v=>liveGate.Add(v));
-            var local=new FortPolicy(Egress(),new[] {@"C:\apps\claude.exe"},new[] {5173});
+            var local=new FortPolicy(Egress(),new[] {@"C:\apps\claude.exe"},false,new[] {5173});
             liveJobs.active=true;
             live.SetReady(true);live.Replace(Policy(),local);
             Check(liveDevice.requests.Count==3 && liveJobs.active && !liveJobs.sealedRegistry && live.Phase==ControllerPhase.Paused && !liveGate.Last(),"live port update retains the protected process and pauses forwarding");
             live.SetReady(true);liveDevice.failAt=4;liveDevice.applyBeforeFailure=true;
-            Throws<IOException>(()=>live.Replace(local,new FortPolicy(Egress(),new[] {@"C:\apps\claude.exe"},new[] {3000})),"driver failure after configuration swap is reported");
+            Throws<IOException>(()=>live.Replace(local,new FortPolicy(Egress(),new[] {@"C:\apps\claude.exe"},false,new[] {3000})),"driver failure after configuration swap is reported");
             Check(liveDevice.requests.Count==5 && Hex(liveDevice.requests.Last().CopyPayload())==Hex(local.Configuration().CopyPayload()) && liveJobs.active && live.Phase==ControllerPhase.Paused,"failed live update restores the previous rule while keeping Claude running");
             liveDevice.failAt=6;liveDevice.failAgainAt=7;
-            Throws<AggregateException>(()=>live.Replace(local,new FortPolicy(Egress(),new[] {@"C:\apps\claude.exe"},new[] {3000})),"failed rollback faults the controller");
+            Throws<AggregateException>(()=>live.Replace(local,new FortPolicy(Egress(),new[] {@"C:\apps\claude.exe"},false,new[] {3000})),"failed rollback faults the controller");
             Check(live.Phase==ControllerPhase.Faulted && !liveGate.Last(),"failed rollback never reopens forwarding");
             var faultGate=new List<bool>();var fault=new ProcessNetworkController(new Device(),Policy(),new Jobs(),v=>faultGate.Add(v));
             fault.SetReady(true);fault.DriverFault(new IOException("offline"));
@@ -217,14 +217,20 @@ namespace IpGuard.ProcessNetwork {
         }
         static void LocalServiceCases() {
             // Fort v3.20.9: LIST_OR=14, AREA_LOCALHOST=1, local-port=3, remote-port=1; no IP-version restriction on loopback branches.
-            byte[] config=new FortPolicy(Egress(),new[] {@"C:\apps\claude.exe"},new[] {5173}).Configuration().CopyPayload();
+            byte[] config=new FortPolicy(Egress(),new[] {@"C:\apps\claude.exe"},false,new[] {5173}).Configuration().CopyPayload();
             Check(config.Length==284,"one loopback service adds exactly two local TCP branches");
             string rule=Hex(config.Skip(144).ToArray());
             Check(rule.StartsWith("6120000070440000"),"proxy and local branches form a terminating OR whitelist");
             Check(rule.Contains("781200004004000001000000300400000200000020040000010006000804000001003514"),"outgoing loopback TCP matches remote port 5173");
             Check(rule.EndsWith("781200004004000001000000300400000100000020040000010006001804000001003514"),"incoming loopback TCP matches local port 5173");
-            Throws<ArgumentException>(()=>new FortPolicy(Egress(),new[] {@"C:\apps\claude.exe"},new[] {23456}),"the proxy port cannot become a local-service exception");
-            Throws<ArgumentException>(()=>new FortPolicy(Egress(),new[] {@"C:\apps\claude.exe"},new[] {0}),"invalid local ports fail before the driver is used");
+            Throws<ArgumentException>(()=>new FortPolicy(Egress(),new[] {@"C:\apps\claude.exe"},false,new[] {23456}),"the proxy port cannot become a local-service exception");
+            Throws<ArgumentException>(()=>new FortPolicy(Egress(),new[] {@"C:\apps\claude.exe"},false,new[] {0}),"invalid local ports fail before the driver is used");
+            byte[] open=new FortPolicy(Egress(),new[] {@"C:\apps\claude.exe"},true,new int[0]).Configuration().CopyPayload();
+            Check(open.Length==220 && Hex(open).Contains("4004000001000000"),"default loopback rule covers every local port and protocol");
+            byte[] blocked=new FortPolicy(Egress(),new[] {@"C:\apps\claude.exe"},true,new[] {5173}).Configuration().CopyPayload();
+            string excluded=Hex(blocked);
+            Check(blocked.Length==268 && excluded.Contains("0904000001003514") && excluded.Contains("1904000001003514"),"one blocked local port is negated in both outbound and inbound branches");
+            Throws<ArgumentException>(()=>new FortPolicy(Egress(),new[] {@"C:\apps\claude.exe"},true,new[] {23456}),"the managed proxy port remains available");
         }
         static void Ipv4SourceCases() {
             Check(new Settings().ipv4Url=="https://claude.ai/cdn-cgi/trace","existing settings retain Claude as their default source");

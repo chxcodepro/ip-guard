@@ -56,7 +56,7 @@ namespace IpGuard {
         string egressIssue = "";
         long lastVerified;
         DateTime nextCheck = DateTime.MinValue;
-        public Guard(string desktopExe,EgressPolicy enhancementPolicy,NetworkPolicyConfig networkPolicy) { this.desktopExe=desktopExe;this.enhancementPolicy=enhancementPolicy; config = Data.Load(); SystemPolicy.FixedProxyPort=config.egress==null ? 0 : config.egress.port;SystemPolicy.EnhancedProxyPort=EnhancementRoute==null ? 0 : EnhancementRoute.port;networkPolicy.Validate(SystemPolicy.EnhancedProxyPort);this.networkPolicy=networkPolicy;SystemPolicy.LocalDevPorts=networkPolicy.localPorts; wifi = new WifiWatch(why => Observe(why, true)); probe=new ClaudeProbe(Emit); commandGuard=new ProcessNetwork.KernelProtection(allowed=>Publish()); RefreshAdapters(); }
+        public Guard(string desktopExe,EgressPolicy enhancementPolicy,NetworkPolicyConfig networkPolicy) { this.desktopExe=desktopExe;this.enhancementPolicy=enhancementPolicy; config = Data.Load(); SystemPolicy.FixedProxyPort=config.egress==null ? 0 : config.egress.port;SystemPolicy.EnhancedProxyPort=EnhancementRoute==null ? 0 : EnhancementRoute.port;networkPolicy.Validate(SystemPolicy.EnhancedProxyPort);this.networkPolicy=networkPolicy;SystemPolicy.LoopbackDirect=networkPolicy.loopbackDirect;SystemPolicy.LoopbackExceptionPorts=networkPolicy.localPorts; wifi = new WifiWatch(why => Observe(why, true)); probe=new ClaudeProbe(Emit); commandGuard=new ProcessNetwork.KernelProtection(allowed=>Publish()); RefreshAdapters(); }
         void RequireCommandChangesClosed(string except=null) {
             if(!config.commandProtection) return;
             foreach(Target app in config.apps.Where(t=>t.enabled && t.enhanced && t.id!=except)) RequireClosed(app);
@@ -325,17 +325,17 @@ namespace IpGuard {
                     var next=Data.Json().Deserialize<NetworkPolicyConfig>(Data.Json().Serialize(input["policy"]));
                     next.Validate(SystemPolicy.EnhancedProxyPort);
                     var previous=networkPolicy;
-                    bool changed=!previous.localPorts.SequenceEqual(next.localPorts);
+                    bool changed=previous.loopbackDirect!=next.loopbackDirect || !previous.localPorts.SequenceEqual(next.localPorts);
                     bool reload=config.commandProtection && !commandGuard.Live;
                     enhancementReady=false;enhancementPhase="checking";enhancementReason="正在应用拦截策略";
                     try {
                         if(config.commandProtection) commandGuard.Allow(false);
                         if(reload) {StopEnhancedTargets();StopCommandGuard();}
-                        else if(changed && config.commandProtection) commandGuard.UpdateLocalPorts(EnhancementRoute,next.localPorts);
-                        networkPolicy=next;SystemPolicy.LocalDevPorts=next.localPorts;
+                        else if(changed && config.commandProtection) commandGuard.UpdateLoopbackPolicy(EnhancementRoute,next.loopbackDirect,next.localPorts);
+                        networkPolicy=next;SystemPolicy.LoopbackDirect=next.loopbackDirect;SystemPolicy.LoopbackExceptionPorts=next.localPorts;
                         if(reload) LoadCommandGuard(true);
                     } catch(Exception error) {
-                        networkPolicy=previous;SystemPolicy.LocalDevPorts=previous.localPorts;
+                        networkPolicy=previous;SystemPolicy.LoopbackDirect=previous.loopbackDirect;SystemPolicy.LoopbackExceptionPorts=previous.localPorts;
                         if(config.commandProtection && !commandGuard.Live) TripEnhanced(error.GetBaseException().Message);
                         throw;
                     }

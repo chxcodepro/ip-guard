@@ -8,7 +8,8 @@ import {
   initialNetworkPolicy,
   networkAction,
   networkPolicySchema,
-  localPolicyPorts,
+  networkRuleSchema,
+  localExceptionPorts,
   networkHost,
 } from "@ip-guard/electron";
 import type { NetworkPolicy, Snapshot, NetworkPolicyState } from "@ip-guard/electron";
@@ -19,6 +20,13 @@ import { openDirect, openTunnel } from "./proxy-tunnel.ts";
 import type { ProxyEndpoint } from "./proxy-tunnel.ts";
 
 const recordSchema = z.object({ revision: z.uuid(), settings: networkPolicySchema });
+// Pre-default-loopback records have only rules; retain them through a one-time backed-up migration.
+const legacyRecordSchema = z
+  .object({
+    revision: z.uuid(),
+    settings: z.object({ rules: z.array(networkRuleSchema).max(64) }).strict(),
+  })
+  .strict();
 export type NetworkPolicyRecord = z.infer<typeof recordSchema>;
 const policyFile = () => path.join(guardDataDirectory(), "network-policy.json");
 export class NetworkPolicies {
@@ -53,13 +61,14 @@ export class NetworkPolicies {
   }
   validate(settings: NetworkPolicy) {
     const reserved = new Set([...this.reservations.values()].flat());
-    if (localPolicyPorts(settings).some((port) => reserved.has(port)))
-      throw new Error("本机直连规则与代理端口冲突，请删除该端口例外。");
+    if (localExceptionPorts(settings).some((port) => reserved.has(port)))
+      throw new Error("本机端口规则与代理端口冲突，请删除该端口例外。");
   }
   get kernelPolicy() {
     return {
       revision: this.record.revision,
-      localPorts: this.error ? [] : localPolicyPorts(this.record.settings),
+      loopbackDirect: this.error ? false : this.record.settings.loopbackDirect,
+      localPorts: this.error ? [] : localExceptionPorts(this.record.settings),
     };
   }
   status(snapshot: Snapshot | undefined, allowed: boolean): NetworkPolicyState {
@@ -93,12 +102,24 @@ export class NetworkPolicies {
               ? "active"
               : "paused",
       childProtection: Boolean(snapshot?.driver.ready),
+      loopbackDirect: snapshot?.networkPolicy.loopbackDirect ?? false,
       localPorts: snapshot?.driver.localPorts ?? [],
     };
   }
   async initialize() {
     try {
-      this.record = recordSchema.parse(JSON.parse(await readFile(policyFile(), "utf8")));
+      const raw: unknown = JSON.parse(await readFile(policyFile(), "utf8"));
+      const current = recordSchema.safeParse(raw);
+      if (current.success) this.record = current.data;
+      else {
+        const legacy = legacyRecordSchema.parse(raw);
+        const migrated = recordSchema.parse({
+          revision: randomUUID(),
+          settings: { ...legacy.settings, loopbackDirect: true },
+        });
+        await this.write(migrated);
+        this.record = migrated;
+      }
     } catch (error) {
       if (error && typeof error === "object" && Reflect.get(error, "code") === "ENOENT") return;
       this.loadError = "拦截策略读取失败，原文件保留；请重新保存有效规则。";

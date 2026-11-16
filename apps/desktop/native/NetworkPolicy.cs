@@ -4,6 +4,7 @@ using System.Linq;
 namespace IpGuard {
     public sealed class NetworkPolicyConfig {
         public string revision;
+        public bool loopbackDirect;
         public int[] localPorts;
         public void Validate(int proxyPort) {
             Guid id;

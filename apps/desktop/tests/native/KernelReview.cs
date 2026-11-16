@@ -142,21 +142,37 @@ public static class KernelReview {
             installed=OwnedDriverRegistration.Read()!=null;
             protection=new KernelProtection(allowed=>proxyAllowed=allowed);
             var egress=new EgressPolicy {id=Guid.NewGuid().ToString("D"),label="isolated review",port=proxyPort};
+            if(args[0]=="--hot-review") SystemPolicy.LoopbackDirect=true;
             protection.Start(egress,new[] {new Target {id=Guid.NewGuid().ToString("D"),name="isolated fixture",path=root,enabled=true}},true);protection.Allow(true);
             using(var session=new Session(protection,root)) {
+                if(args[0]=="--hot-review") {
+                    Check(session.Send("direct")=="OK" && session.Send("ipv6")=="OK" && ProbeInbound(inboundPort)=="OK","initial loopback default permits running local services");
+                    before=directCount;
+                    protection.UpdateLoopbackPolicy(egress,false,new int[0]);
+                    protection.Allow(true);
+                }
                 Check(session.Send("proxy")=="OK","fixed proxy accepted");
                 Check(session.Send("direct")=="BLOCKED","direct TCP blocked");Check(session.Send("ipv6")=="BLOCKED","IPv6 blocked");
                 Check(ProbeInbound(inboundPort)=="BLOCKED","protected local server is blocked before a port exception");
                 Check(session.Send("child")=="BLOCKED","child first network request blocked");
                 session.Send("udp");Thread.Sleep(200);Check(udpCount==0,"UDP blocked");
-                protection.UpdateLocalPorts(egress,new[] {directPort,inboundPort});
+                protection.UpdateLoopbackPolicy(egress,false,new[] {directPort,inboundPort});
                 Check(session.Send("direct")=="OK","live local-port update allows the same guarded process");
                 Check(ProbeInbound(inboundPort)=="OK","live local-port update opens the existing protected development server");
                 using(Process same=Process.GetProcessById((int)session.Pid)) Check(!same.HasExited,"live update retains the protected PID");
                 before=directCount;
-                protection.UpdateLocalPorts(egress,new int[0]);
+                protection.UpdateLoopbackPolicy(egress,false,new int[0]);
                 Check(session.Send("direct")=="BLOCKED","live local-port removal blocks new traffic without restarting Claude");
                 Check(ProbeInbound(inboundPort)=="BLOCKED","live local-port removal closes the protected server inbound path");
+                protection.UpdateLoopbackPolicy(egress,true,new int[0]);
+                Check(session.Send("direct")=="OK" && session.Send("ipv6")=="OK" && session.Send("child")=="OK","default loopback permits IPv4, IPv6 and child development connections");
+                Check(ProbeInbound(inboundPort)=="OK","default loopback opens the existing protected local server");
+                Interlocked.Exchange(ref udpCount,0);session.Send("udp");Thread.Sleep(200);Check(udpCount>0,"default loopback permits local UDP");
+                protection.UpdateLoopbackPolicy(egress,true,new[] {directPort,inboundPort});
+                Check(session.Send("direct")=="BLOCKED" && ProbeInbound(inboundPort)=="BLOCKED","blocked port exceptions override the loopback default without ending Claude");
+                before=directCount;
+                protection.UpdateLoopbackPolicy(egress,false,new int[0]);
+                Check(session.Send("direct")=="BLOCKED","turning off the loopback default applies to the same process");
                 protection.Allow(false);Check(session.Send("proxy")=="BLOCKED","pause closes proxy forwarding");
                 using(Process same=Process.GetProcessById((int)session.Pid)) Check(!same.HasExited,"pause retains process");
                 protection.Allow(true);Check(session.Send("proxy")=="OK","same process resumes via fixed proxy");

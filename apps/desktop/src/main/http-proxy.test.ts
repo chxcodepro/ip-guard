@@ -39,6 +39,7 @@ function policies(port: number) {
   policy.commit({
     revision,
     settings: networkPolicySchema.parse({
+      loopbackDirect: false,
       rules: [
         { id: crypto.randomUUID(), enabled: true, host: "localhost", port, action: "direct" },
       ],
