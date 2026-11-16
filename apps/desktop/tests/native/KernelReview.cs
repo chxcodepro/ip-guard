@@ -130,6 +130,10 @@ public static class KernelReview {
             protection=new KernelProtection(allowed=>proxyAllowed=allowed);
             var egress=new EgressPolicy {id=Guid.NewGuid().ToString("D"),label="isolated review",port=proxyPort};
             protection.Start(egress,new[] {new Target {id=Guid.NewGuid().ToString("D"),name="isolated fixture",path=root,enabled=true}},true);protection.Allow(true);
+            using(var prior=new Session(protection,root)) {
+                try {Console.WriteLine("journal: pre-update missing result="+prior.Send("missing"));} catch(IOException) {}
+                Thread.Sleep(400);Console.WriteLine("journal: pre-update metadata="+(prior.Error==null ? "none" : prior.Error.ToString()));
+            }
             using(var session=new Session(protection,root)) {
                 Check(session.Send("proxy")=="OK","fixed proxy accepted");
                 Check(session.Send("direct")=="BLOCKED","direct TCP blocked");Check(session.Send("ipv6")=="BLOCKED","IPv6 blocked");
@@ -147,8 +151,9 @@ public static class KernelReview {
                 Check(directCount==before,"no guarded direct packets arrived");
             }
             using(var missing=new Session(protection,root)) {
-                try {missing.Send("missing");}catch(IOException) {}
-                Thread.Sleep(400);Check(missing.Error!=null && missing.Error.Message.Contains("元数据"),"missing metadata refused before user code");
+                try {Console.WriteLine("journal: post-update missing result="+missing.Send("missing"));}catch(IOException) {}
+                Thread.Sleep(400);Console.WriteLine("journal: post-update metadata="+(missing.Error==null ? "none" : missing.Error.ToString()));
+                Check(missing.Error!=null && missing.Error.Message.Contains("元数据"),"missing metadata refused before user code");
             }
             protection.Stop();protection=null;
             Check(OwnedDriverRegistration.Read().Validate(false)==1,"normal cleanup stops driver");
