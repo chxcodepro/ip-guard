@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
 
-import { browserExtensionId, browserStateSchema } from "@ip-guard/electron";
+import { browserExtensionId, browserStateSchema, nativeVersion } from "@ip-guard/electron";
 
 import { posixBrowserSocketPath } from "./posix-platform.ts";
 
@@ -50,7 +50,7 @@ export async function verifyNativeBridge(executable: string, helper: string) {
           }
         });
         const request = Buffer.from(
-          JSON.stringify({ action: "watch", protocol: 1, extensionVersion: "0.13.0" }),
+          JSON.stringify({ action: "watch", protocol: 1, extensionVersion: nativeVersion }),
         );
         const header = Buffer.alloc(4);
         header.writeUInt32LE(request.length);

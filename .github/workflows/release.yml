@@ -1,23 +1,71 @@
-name: Build Windows release
+name: Build desktop release
 
 on:
   release:
     types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing release tag to build
+        required: true
+        type: string
 
 permissions:
   contents: write
 
+env:
+  RELEASE_TAG: ${{ inputs.tag || github.event.release.tag_name }}
+
 concurrency:
-  group: release-${{ github.event.release.tag_name }}
+  group: release-${{ inputs.tag || github.event.release.tag_name }}
   cancel-in-progress: false
 
 jobs:
-  windows:
-    runs-on: windows-latest
+  plan:
+    runs-on: ubuntu-22.04
+    outputs:
+      build: ${{ steps.assets.outputs.build }}
+      matrix: ${{ steps.assets.outputs.matrix }}
     steps:
       - uses: actions/checkout@v7
         with:
-          ref: ${{ github.event.release.tag_name }}
+          ref: ${{ env.RELEASE_TAG }}
+          persist-credentials: false
+      - id: assets
+        name: Verify version and existing release inventory
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          node --input-type=module <<'NODE'
+          import {readFileSync,appendFileSync,existsSync} from 'node:fs';
+          import {execFileSync} from 'node:child_process';
+          const version=JSON.parse(readFileSync('apps/desktop/package.json','utf8')).version;
+          if(!/^\d+\.\d+\.\d+$/.test(version)||process.env.RELEASE_TAG!=='v'+version)throw Error('Release tag must match the desktop version');
+          const release=JSON.parse(execFileSync('gh',['release','view',process.env.RELEASE_TAG,'--repo',process.env.GITHUB_REPOSITORY,'--json','assets'],{encoding:'utf8'}));
+          const expected=[`IP-Guard-Setup-${version}.exe`,`IP-Guard-Setup-${version}.exe.blockmap`,`IP-Guard-Browser-${version}.zip`,'latest.yml'];
+          const include=[{runner:'windows-latest',platform:'windows',arch:'x64'}];
+          // Historical tags predate the POSIX builder and retain their Windows-only release contract.
+          if(existsSync('apps/desktop/electron-builder.posix.yml')) {
+            expected.push(`IP-Guard-Linux-Preview-${version}-x86_64.AppImage`,`IP-Guard-Linux-Preview-${version}-amd64.deb`,...['arm64','x64'].flatMap(arch=>['dmg','zip'].map(ext=>`IP-Guard-macOS-Preview-${version}-${arch}.${ext}`)));
+            include.push({runner:'ubuntu-22.04',platform:'linux',arch:'x64'},{runner:'macos-15',platform:'macos',arch:'arm64'},{runner:'macos-15-intel',platform:'macos',arch:'x64'});
+          }
+          const complete=expected.every(name=>release.assets.some(asset=>asset.name===name&&asset.size>0));
+          appendFileSync(process.env.GITHUB_OUTPUT,`build=${!complete}\nmatrix=${JSON.stringify({include})}\n`);
+          console.log(complete?'Release assets are complete; keeping the verified files.':'Building release assets.');
+          NODE
+
+  package:
+    needs: plan
+    if: needs.plan.outputs.build == 'true'
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ env.RELEASE_TAG }}
           persist-credentials: false
       - uses: pnpm/action-setup@v6
         with:
@@ -26,22 +74,62 @@ jobs:
         with:
           node-version: 24.22.1
           cache: pnpm
-      - name: Verify release version
-        shell: pwsh
-        env:
-          RELEASE_TAG: ${{ github.event.release.tag_name }}
-        run: |
-          $package = Get-Content apps/desktop/package.json -Raw | ConvertFrom-Json
-          if ($env:RELEASE_TAG -ne "v$($package.version)") { throw 'Release tag must match apps/desktop/package.json' }
       - run: pnpm install --frozen-lockfile
-      - name: Build installer and update metadata
+      - name: Build installers and browser extension
         run: pnpm exec vp run package:desktop
-      - name: Attach release files
-        shell: pwsh
+      - name: Check Windows release contracts
+        if: matrix.platform == 'windows'
+        run: pnpm exec vp test --project unit packages/electron/src/network-policy.test.ts apps/desktop/src/main/forced-proxy.test.ts apps/desktop/src/main/mihomo-config.test.ts apps/desktop/src/main/http-proxy.test.ts apps/desktop/src/main/renderer-route.test.ts
+      - name: Inspect packaged Windows renderer and native component
+        if: matrix.platform == 'windows' && hashFiles('apps/desktop/scripts/verify-windows-package.mjs') != ''
+        run: node apps/desktop/scripts/verify-windows-package.mjs
+      - name: Verify POSIX contracts
+        if: matrix.platform != 'windows'
+        run: pnpm exec vp test --project unit apps/desktop/src/main/posix-platform.test.ts apps/desktop/src/main/posix-guard.test.ts packages/electron/src/network-policy.test.ts
+      - name: Inspect packaged Linux UI
+        if: matrix.platform == 'linux'
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/ipguard-home"
+          export HOME="$RUNNER_TEMP/ipguard-home"
+          export XDG_CONFIG_HOME="$HOME/.config"
+          timeout 40s xvfb-run -a apps/desktop/release-posix/linux-unpacked/ip-guard --no-sandbox --posix-smoke
+      - name: Inspect packaged macOS UI
+        if: matrix.platform == 'macos'
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/ipguard-home"
+          export HOME="$RUNNER_TEMP/ipguard-home"
+          app=$(find apps/desktop/release-posix -maxdepth 2 -name 'IP Guard.app' -type d -print -quit)
+          test -n "$app"
+          "$app/Contents/MacOS/IP Guard" --posix-smoke &
+          pid=$!
+          for i in $(seq 1 40); do
+            if ! kill -0 "$pid" 2>/dev/null; then wait "$pid"; exit $?; fi
+            sleep 1
+          done
+          kill "$pid"
+          exit 1
+      - name: Attach verified release files
         env:
           GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          RELEASE_PLATFORM: ${{ matrix.platform }}
+        shell: bash
         run: |
-          $assets = Get-ChildItem apps/desktop/release -File | Where-Object { $_.Name -match '^IP-Guard-Setup-.+\.exe(\.blockmap)?$|^IP-Guard-Browser-.+\.zip$|^latest\.yml$' }
-          if (-not ($assets.Name -contains 'latest.yml')) { throw 'Missing auto-update metadata' }
-          gh release upload $env:RELEASE_TAG @($assets.FullName) --repo $env:GITHUB_REPOSITORY
+          node --input-type=module <<'NODE'
+          import {readdirSync} from 'node:fs';
+          import {join} from 'node:path';
+          import {execFileSync} from 'node:child_process';
+          const windows=process.env.RELEASE_PLATFORM==='windows',folder=windows?'apps/desktop/release':'apps/desktop/release-posix';
+          const files=readdirSync(folder).filter(name=>windows?/^IP-Guard-(?:Setup-.+\.exe(?:\.blockmap)?|Browser-.+\.zip)$|^latest\.yml$/.test(name):/\.(?:AppImage|deb|dmg|zip)$/.test(name));
+          if(files.length!==(windows?4:2))throw Error('Unexpected release asset inventory: '+files.join(', '));
+          execFileSync('gh',['release','upload',process.env.RELEASE_TAG,...files.map(name=>join(folder,name)),'--repo',process.env.GITHUB_REPOSITORY],{stdio:'inherit'});
+          NODE
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: Release-QA-${{ matrix.platform }}-${{ matrix.arch }}
+          path: |
+            artifacts/posix-smoke/
+            artifacts/windows-release-smoke/
+          if-no-files-found: warn

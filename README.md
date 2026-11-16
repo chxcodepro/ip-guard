@@ -26,15 +26,15 @@
 
 ## Linux / macOS 开发预览
 
-[跨平台构建与下载](https://github.com/chxcodepro/ip-guard/actions?query=branch%3Acodex%2Fposix-desktop) · [预览版源码](https://github.com/chxcodepro/ip-guard/tree/codex/posix-desktop)
+[Releases 下载](https://github.com/chxcodepro/ip-guard/releases/latest) · [跨平台构建记录](https://github.com/chxcodepro/ip-guard/actions/workflows/release.yml)
 
-打开成功的构建，在 **Artifacts** 下载对应平台包；下载构建附件需要登录 GitHub。Windows 正式版继续通过 Releases 分发。
+从 Releases 下载对应平台和架构的文件，文件名包含版本号。开发分支的临时包仍可从成功构建的 Artifacts 下载，后者需要登录 GitHub。
 
 | 平台 | 构建包 |
 | --- | --- |
-| Linux x64 | `IP-Guard-linux-x64-preview`：deb、AppImage |
-| macOS Apple Silicon | `IP-Guard-macos-arm64-preview`：DMG、ZIP |
-| macOS Intel | `IP-Guard-macos-x64-preview`：DMG、ZIP |
+| Linux x64 | `IP-Guard-Linux-Preview-<版本>-amd64.deb`、`*-x86_64.AppImage` |
+| macOS Apple Silicon | `IP-Guard-macOS-Preview-<版本>-arm64.dmg`、`*.zip` |
+| macOS Intel | `IP-Guard-macOS-Preview-<版本>-x64.dmg`、`*.zip` |
 
 这批预览提供真实的受管启动与代理门禁：IP 锁定和重试、网络 / 网卡检测、暂停与恢复受管连接、程序和参数管理、登录自启动、托盘与深浅主题，以及 Chrome / Edge 网页防护通信。
 
@@ -46,7 +46,7 @@
 
 当前保护范围是**经过受管代理的连接**。直接打开原程序或执行原 `claude` 命令仍沿用原启动方式；系统级直连、UDP、完整进程树过滤与强制固定出口增强继续由后续原生后端完成。分流模式中的国内目标仍可能按原代理规则直连。严格防止本机原出口泄露，需要等待相应原生增强验收。
 
-预览包独立于稳定自动更新，更新时从构建页下载后手动替换。Linux 在 Ubuntu 22.04 x64、macOS 在 15 的 arm64 / x64 临时宿主验证；其他发行版和系统版本仍待验证。macOS 当前使用 ad-hoc 开发签名，Developer ID、公证和系统网络扩展授权另行配置，打开时可能出现系统批准提示。
+Linux / macOS 预览包使用手动更新，从 Releases 下载后替换。Linux 在 Ubuntu 22.04 x64、macOS 在 15 的 arm64 / x64 临时宿主验证；其他发行版和系统版本仍待验证。macOS 当前使用 ad-hoc 开发签名，Developer ID、公证和系统网络扩展授权另行配置，打开时可能出现系统批准提示。
 
 ## Windows 下载与运行要求
 

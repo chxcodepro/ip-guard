@@ -22,7 +22,7 @@ mac:
   hardenedRuntime: false
   notarize: false
   target: [dmg, zip]
-  artifactName: IP-Guard-macOS-Preview-${arch}.${ext}
+  artifactName: IP-Guard-macOS-Preview-${version}-${arch}.${ext}
 linux:
   category: Utility
   icon: assets/icon.png
@@ -30,5 +30,5 @@ linux:
   maintainer: chxcodepro
   synopsis: Managed Claude IPv4 proxy gate
   target: [AppImage, deb]
-  artifactName: IP-Guard-Linux-Preview-${arch}.${ext}
+  artifactName: IP-Guard-Linux-Preview-${version}-${arch}.${ext}
 publish: null

@@ -2,7 +2,8 @@ import path from "node:path";
 
 import { app, BrowserWindow, dialog, Menu, nativeImage, Tray } from "electron";
 
-import { rendererOrigin, claudeIpv4Endpoint } from "@ip-guard/electron";
+import { rendererOrigin, claudeIpv4Endpoint, nativeVersion } from "@ip-guard/electron";
+import type { Snapshot } from "@ip-guard/electron";
 
 import { BrowserBridge } from "#src/main/browser-bridge.ts";
 import { notifyBrowserRecovery } from "#src/main/browser-recovery.ts";
@@ -72,6 +73,9 @@ const updates = new ApplicationUpdates(
 const browserBridge = new BrowserBridge(guardian, updates);
 let tray: Tray | undefined;
 const background = process.argv.includes("--background");
+const smoke = process.argv.includes("--windows-smoke");
+if (smoke && process.env.GITHUB_ACTIONS !== "true")
+  throw new Error("Windows smoke verification is restricted to CI");
 
 const open = () =>
   createMainWindow({
@@ -82,6 +86,19 @@ const open = () =>
   });
 
 const start = async () => {
+  const initialSnapshot = smoke
+    ? new Promise<Snapshot>((resolve, reject) => {
+        const timer = setTimeout(
+          () => reject(new Error(guardian.error || "Native handshake timed out")),
+          25000,
+        );
+        guardian.once("snapshot", (snapshot) => {
+          clearTimeout(timer);
+          resolve(snapshot);
+        });
+      })
+    : undefined;
+  void initialSnapshot?.catch(() => undefined);
   await networkPolicies.initialize();
   await fixedEgress.initialize();
   await proxyEnhancement.initialize();
@@ -249,6 +266,9 @@ const start = async () => {
   }
 
   const win = open();
+  const loaded = smoke
+    ? new Promise<void>((resolve) => win.webContents.once("did-finish-load", () => resolve()))
+    : undefined;
   void notifyBrowserRecovery(win).catch((error) => console.error("旧浏览器扩展恢复提示", error));
   win.on("close", (event) => {
     if (!quitting && !quittingForUpdate) {
@@ -301,6 +321,32 @@ const start = async () => {
   guardian.on("snapshot", (snapshot) => {
     tray?.setToolTip(`IP Guard · ${snapshot.ready ? "IPv4 匹配" : snapshot.reason}`.slice(0, 120));
   });
+  if (smoke) {
+    try {
+      const snapshot = await initialSnapshot;
+      if (
+        !snapshot?.online ||
+        snapshot.nativeVersion !== nativeVersion ||
+        snapshot.apps.length ||
+        snapshot.driver.enabled
+      )
+        throw new Error("Fresh native smoke state did not match the packaged version");
+      await loaded;
+      await win.webContents.executeJavaScript("document.fonts.ready.then(() => true)");
+      const { mkdir, writeFile } = await import("node:fs/promises");
+      const folder = path.resolve("artifacts/windows-release-smoke");
+      await mkdir(folder, { recursive: true });
+      await writeFile(
+        path.join(folder, "windows.png"),
+        (await win.webContents.capturePage()).toPNG(),
+      );
+      await writeFile(path.join(folder, "windows.json"), JSON.stringify(snapshot));
+      app.quit();
+    } catch (error) {
+      console.error(error);
+      app.exit(1);
+    }
+  }
 };
 
 if (app.requestSingleInstanceLock()) {
