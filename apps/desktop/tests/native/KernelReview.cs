@@ -149,6 +149,7 @@ public static class KernelReview {
                     Check(session.Send("direct")=="OK" && session.Send("ipv6")=="OK" && ProbeInbound(inboundPort)=="OK","initial loopback default permits running local services");
                     before=directCount;
                     protection.UpdateLoopbackPolicy(egress,false,new int[0]);
+                    protection.Allow(true);
                 }
                 Check(session.Send("proxy")=="OK","fixed proxy accepted");
                 Check(session.Send("direct")=="BLOCKED","direct TCP blocked");Check(session.Send("ipv6")=="BLOCKED","IPv6 blocked");
