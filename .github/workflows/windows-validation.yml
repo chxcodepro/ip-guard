@@ -4,12 +4,18 @@ on:
   push:
     branches: [codex/windows-stable-validation]
   workflow_dispatch:
+    inputs:
+      kernel_hot_review:
+        description: Verify Fort live local-port updates on an isolated runner
+        type: boolean
+        default: false
 
 permissions:
   contents: read
 
 jobs:
   windows:
+    if: ${{ !inputs.kernel_hot_review }}
     runs-on: windows-latest
     timeout-minutes: 20
     steps:
@@ -50,3 +56,59 @@ jobs:
           name: windows-stable-validation
           path: artifacts/windows-stable/
           if-no-files-found: warn
+
+  kernel-hot-review:
+    if: ${{ inputs.kernel_hot_review }}
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 12.15.0
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24.22.1
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Build isolated native review and pinned Fort files
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          node apps/desktop/scripts/prepare-fort.ts
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          node apps/desktop/scripts/build-kernel-review.ts
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $version = (Get-Content apps/desktop/package.json -Raw | ConvertFrom-Json).version
+          $root = Join-Path $env:RUNNER_TEMP 'ipguard-kernel-hot'
+          $native = Join-Path $root "resources/native/$version"
+          $driver = Join-Path $root 'resources/drivers/fort'
+          New-Item -ItemType Directory -Force -Path $native,$driver | Out-Null
+          Copy-Item artifacts/kernel-integration-review/*.exe $native
+          Copy-Item "apps/desktop/dist/native/$version/IpGuard.Recovery.exe" $native
+          Copy-Item apps/desktop/dist/drivers/fort/fortfw.sys $driver
+          "IPGUARD_REVIEW_NATIVE=$native" >> $env:GITHUB_ENV
+      - name: Verify live rule replacement and protected PID
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $review = Join-Path $env:IPGUARD_REVIEW_NATIVE 'IpGuard.Native.exe'
+          & $review --install-only
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & $review --hot-review
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Recover and inspect isolated driver state
+        if: always()
+        shell: pwsh
+        run: |
+          if (-not $env:IPGUARD_REVIEW_NATIVE) { return }
+          $recovery = Join-Path $env:IPGUARD_REVIEW_NATIVE 'IpGuard.Recovery.exe'
+          if (Test-Path -LiteralPath $recovery) {
+            & $recovery --repair
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
+          if (Test-Path 'HKLM:\SOFTWARE\IPGuard\ProcessNetwork') { throw 'Owned driver registration remains after review' }
+          $service = Get-CimInstance Win32_SystemDriver -Filter "Name = 'fortfw'" -ErrorAction SilentlyContinue
+          if ($service -and $service.State -eq 'Running') { throw 'Fort driver remains loaded after review' }

@@ -30,6 +30,9 @@ public static class ReviewClient {
         if(args.Length==0 || args[0]=="one") return Exchange(false,false)=="OK" ? 0 : 7;
         if(args[0]=="v6") return Exchange(false,true)=="OK" ? 0 : 7;
         if(args[0]=="udp") return SendUdp()=="SENT" ? 0 : 7;
+        var inbound=new TcpListener(IPAddress.Loopback,Int32.Parse(Environment.GetEnvironmentVariable("REVIEW_INBOUND")));
+        inbound.Start();Task.Run(()=>{while(true) {try {using(var client=inbound.AcceptTcpClient()) {byte[] data=Encoding.ASCII.GetBytes("ok\n");client.GetStream().Write(data,0,data.Length);}}catch(SocketException) {break;}catch(ObjectDisposedException) {break;}}});
+        try {
         string name=Environment.GetEnvironmentVariable("REVIEW_PIPE")+"-"+Process.GetCurrentProcess().Id;
         using(var pipe=new NamedPipeServerStream(name,PipeDirection.InOut,1)) {
             pipe.WaitForConnection();var reader=new StreamReader(pipe);var writer=new StreamWriter(pipe) {AutoFlush=true};
@@ -45,6 +48,7 @@ public static class ReviewClient {
             }
         }
         return 0;
+        } finally {inbound.Stop();}
     }
 }
 static class NativeEmpty {
@@ -84,6 +88,13 @@ public static class KernelReview {
         return ((IPEndPoint)listener.LocalEndpoint).Port;
     }
     static void Check(bool ok,string name) {Console.WriteLine((ok ? "PASS " : "FAIL ")+name);if(!ok) throw new Exception(name);}
+    static string ProbeInbound(int port) {
+        try {using(var client=new TcpClient()) {
+            IAsyncResult connected=client.BeginConnect(IPAddress.Loopback,port,null,null);
+            if(!connected.AsyncWaitHandle.WaitOne(1800)) return "BLOCKED";client.EndConnect(connected);client.ReceiveTimeout=1800;
+            return client.GetStream().ReadByte()=='o' ? "OK" : "BLOCKED";
+        }} catch(SocketException) {return "BLOCKED";} catch(IOException) {return "BLOCKED";}
+    }
     sealed class Session : IDisposable {
         public uint Pid;public Exception Error;
         readonly ManualResetEvent created=new ManualResetEvent(false);
@@ -111,7 +122,7 @@ public static class KernelReview {
         public void Dispose() {if(pipe!=null) {try {if(thread.IsAlive) Send("exit");}catch(IOException) {}pipe.Dispose();}if(!thread.Join(5000)) throw new Exception("debug worker did not exit");}
     }
     public static int Main(string[] args) {
-        if(args.Length!=1 || (args[0]!="--install-only" && args[0]!="--verify")) return 2;
+        if(args.Length!=1 || (args[0]!="--install-only" && args[0]!="--verify" && args[0]!="--hot-review")) return 2;
         KernelProtection protection=null;bool installed=false;
         try {
             if(args[0]=="--install-only") {OwnedDriverRegistration.Install();Console.WriteLine("INSTALL_ONLY: driver stopped; independent recovery task prepared");return 0;}
@@ -119,8 +130,10 @@ public static class KernelReview {
             string folder=Path.GetDirectoryName(SystemPolicy.Exe),root=Path.Combine(folder,"claude.exe"),child=Path.Combine(folder,"child.exe");
             Environment.SetEnvironmentVariable("REVIEW_PIPE","IPGuard.KernelReview."+Guid.NewGuid().ToString("N"));
             int proxyPort=StartTcp(true,false),directPort=StartTcp(false,false),v6Port=StartTcp(false,true);
+            var reserved=new TcpListener(IPAddress.Loopback,0);reserved.Start();int inboundPort=((IPEndPoint)reserved.LocalEndpoint).Port;reserved.Stop();
             udp=new UdpClient(new IPEndPoint(IPAddress.Loopback,0));Task.Run(()=>{while(true) {try {IPEndPoint endpoint=null;udp.Receive(ref endpoint);Interlocked.Increment(ref udpCount);}catch {break;}}});
             Environment.SetEnvironmentVariable("REVIEW_PROXY",proxyPort.ToString());Environment.SetEnvironmentVariable("REVIEW_DIRECT",directPort.ToString());Environment.SetEnvironmentVariable("REVIEW_V6",v6Port.ToString());Environment.SetEnvironmentVariable("REVIEW_UDP",((IPEndPoint)udp.Client.LocalEndPoint).Port.ToString());Environment.SetEnvironmentVariable("REVIEW_CHILD",child);
+            Environment.SetEnvironmentVariable("REVIEW_INBOUND",inboundPort.ToString());
             using(Process baseline=Process.Start(new ProcessStartInfo(root,"one") {UseShellExecute=false,CreateNoWindow=true})) {Check(baseline.WaitForExit(5000) && baseline.ExitCode==0,"unfiltered direct TCP positive control");}
             using(Process baseline=Process.Start(new ProcessStartInfo(root,"v6") {UseShellExecute=false,CreateNoWindow=true})) {Check(baseline.WaitForExit(5000) && baseline.ExitCode==0,"unfiltered IPv6 positive control");}
             using(Process baseline=Process.Start(new ProcessStartInfo(root,"udp") {UseShellExecute=false,CreateNoWindow=true})) {Check(baseline.WaitForExit(5000) && baseline.ExitCode==0,"unfiltered UDP positive control");}
@@ -133,14 +146,23 @@ public static class KernelReview {
             using(var session=new Session(protection,root)) {
                 Check(session.Send("proxy")=="OK","fixed proxy accepted");
                 Check(session.Send("direct")=="BLOCKED","direct TCP blocked");Check(session.Send("ipv6")=="BLOCKED","IPv6 blocked");
+                Check(ProbeInbound(inboundPort)=="BLOCKED","protected local server is blocked before a port exception");
                 Check(session.Send("child")=="BLOCKED","child first network request blocked");
                 session.Send("udp");Thread.Sleep(200);Check(udpCount==0,"UDP blocked");
+                protection.UpdateLocalPorts(egress,new[] {directPort,inboundPort});
+                Check(session.Send("direct")=="OK","live local-port update allows the same guarded process");
+                Check(ProbeInbound(inboundPort)=="OK","live local-port update opens the existing protected development server");
+                using(Process same=Process.GetProcessById((int)session.Pid)) Check(!same.HasExited,"live update retains the protected PID");
+                before=directCount;
+                protection.UpdateLocalPorts(egress,new int[0]);
+                Check(session.Send("direct")=="BLOCKED","live local-port removal blocks new traffic without restarting Claude");
+                Check(ProbeInbound(inboundPort)=="BLOCKED","live local-port removal closes the protected server inbound path");
                 protection.Allow(false);Check(session.Send("proxy")=="BLOCKED","pause closes proxy forwarding");
                 using(Process same=Process.GetProcessById((int)session.Pid)) Check(!same.HasExited,"pause retains process");
                 protection.Allow(true);Check(session.Send("proxy")=="OK","same process resumes via fixed proxy");
                 Check(directCount==before,"no guarded direct packets arrived");
             }
-            using(var missing=new Session(protection,root)) {
+            if(args[0]=="--verify") using(var missing=new Session(protection,root)) {
                 try {missing.Send("missing");}catch(IOException) {}
                 Thread.Sleep(400);Check(missing.Error!=null && missing.Error.Message.Contains("元数据"),"missing metadata refused before user code");
             }

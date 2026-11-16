@@ -55,6 +55,13 @@ export function NetworkPolicyDialog({
       rules: current.rules.map((rule, i) => (i === index ? { ...rule, ...value } : rule)),
     }));
   };
+  const addRule = (host: string, port: number, action: NetworkPolicy["rules"][number]["action"]) => {
+    const id = crypto.randomUUID();
+    setFocusId(id);
+    setDraft((current) => ({
+      rules: [...current.rules, { id, enabled: true, host, port, action }],
+    }));
+  };
   const save = async () => {
     const parsed = networkPolicySchema.safeParse(draft);
     if (!parsed.success) {
@@ -177,30 +184,26 @@ export function NetworkPolicyDialog({
               <h3 id="policy-rules-title">
                 放行与阻断例外{dirty && <span className="policy-dirty">未保存</span>}
               </h3>
-              <button
-                type="button"
-                className="btn"
-                disabled={busy || !state || draft.rules.length >= 64}
-                onClick={() => {
-                  const id = crypto.randomUUID();
-                  setFocusId(id);
-                  setDraft((current) => ({
-                    rules: [
-                      ...current.rules,
-                      {
-                        id,
-                        enabled: true,
-                        host: "",
-                        port: 443,
-                        action: "proxy",
-                      },
-                    ],
-                  }));
-                }}
-              >
-                <Plus size={14} />
-                添加规则
-              </button>
+              <div className="policy-rule-actions">
+                <button
+                  type="button"
+                  className="btn"
+                  disabled={busy || !state || draft.rules.length >= 64}
+                  onClick={() => addRule("localhost", 0, "direct")}
+                >
+                  <Plus size={14} />
+                  本机端口
+                </button>
+                <button
+                  type="button"
+                  className="btn"
+                  disabled={busy || !state || draft.rules.length >= 64}
+                  onClick={() => addRule("", 443, "proxy")}
+                >
+                  <Plus size={14} />
+                  添加规则
+                </button>
+              </div>
             </div>
             <div className="policy-rule-labels" aria-hidden="true">
               <span>启用</span>
@@ -221,7 +224,7 @@ export function NetworkPolicyDialog({
                   />
                   <input
                     aria-label={`规则 ${index + 1} 目标主机`}
-                    autoFocus={focusId === rule.id}
+                    autoFocus={focusId === rule.id && rule.host !== "localhost"}
                     value={rule.host}
                     placeholder="localhost 或 example.com"
                     maxLength={253}
@@ -240,6 +243,7 @@ export function NetworkPolicyDialog({
                   <input
                     aria-label={`规则 ${index + 1} 端口`}
                     type="number"
+                    autoFocus={focusId === rule.id && rule.host === "localhost"}
                     min={1}
                     max={65535}
                     value={rule.port || ""}

@@ -115,6 +115,13 @@ namespace IpGuard.ProcessNetwork {
         public void Register(string name,IntPtr job) {if(!Live) throw new Exception("命令防护未就绪。");jobs.Register(name,job);}
         public void Unregister(string name) {if(jobs!=null) jobs.Unregister(name);}
         public void Allow(bool allowed) {if(Live) controller.SetReady(allowed);}
+        public void UpdateLocalPorts(EgressPolicy egress,int[] ports) {
+            if(!Live) throw new InvalidOperationException("命令防护未就绪，暂无法更新本机端口。");
+            var previous=new FortPolicy(egress,roots,activeLocalPorts);
+            var next=new FortPolicy(egress,roots,ports);
+            try {controller.Replace(previous,next);activeLocalPorts=next.LocalPorts;}
+            catch(Exception error) {if(controller.Phase==ControllerPhase.Faulted) SetFailure("本机端口规则恢复失败："+error.GetBaseException().Message);throw;}
+        }
         public string HealthError() {
             if(runtime!=null && runtime.Error!="") return runtime.Error;
             if(Live) {try {var record=OwnedDriverRegistration.Read();if(record==null || record.RecoveryPending || record.Validate(false)!=4) return "命令防护驱动已离线。";} catch(Exception error) {return error.GetBaseException().Message;}}

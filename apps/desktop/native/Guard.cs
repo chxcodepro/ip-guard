@@ -326,12 +326,19 @@ namespace IpGuard {
                     next.Validate(SystemPolicy.EnhancedProxyPort);
                     var previous=networkPolicy;
                     bool changed=!previous.localPorts.SequenceEqual(next.localPorts);
-                    bool reload=config.commandProtection && (changed || !commandGuard.Live);
+                    bool reload=config.commandProtection && !commandGuard.Live;
                     enhancementReady=false;enhancementPhase="checking";enhancementReason="正在应用拦截策略";
-                    if(reload) {StopEnhancedTargets();StopCommandGuard();}
-                    networkPolicy=next;SystemPolicy.LocalDevPorts=next.localPorts;
-                    try {if(reload) LoadCommandGuard(true);}
-                    catch {networkPolicy=previous;SystemPolicy.LocalDevPorts=previous.localPorts;throw;}
+                    try {
+                        if(config.commandProtection) commandGuard.Allow(false);
+                        if(reload) {StopEnhancedTargets();StopCommandGuard();}
+                        else if(changed && config.commandProtection) commandGuard.UpdateLocalPorts(EnhancementRoute,next.localPorts);
+                        networkPolicy=next;SystemPolicy.LocalDevPorts=next.localPorts;
+                        if(reload) LoadCommandGuard(true);
+                    } catch(Exception error) {
+                        networkPolicy=previous;SystemPolicy.LocalDevPorts=previous.localPorts;
+                        if(config.commandProtection && !commandGuard.Live) TripEnhanced(error.GetBaseException().Message);
+                        throw;
+                    }
                     Log("info","全局拦截策略已应用 · "+next.revision);
                 } else if(action=="network:invalidate") {
                     string message=input["reason"] as string;
