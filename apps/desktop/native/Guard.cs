@@ -248,7 +248,7 @@ namespace IpGuard {
                     SystemPolicy.Block(previous,true);StopTarget(previous.id);
                     SystemPolicy.Unintercept(previous);SystemPolicy.RemoveFirewall(previous);
                     installing=true;
-                    SystemPolicy.Block(next,true);SystemPolicy.Intercept(next);
+                    SystemPolicy.Block(next,true);SystemPolicy.Intercept(next,next.enhanced ? EnhancementRoute : null);
                 }
                 Data.Save(new Config {settings=config.settings,apps=apps,autostart=config.autostart,egress=config.egress,rulesLocked=config.rulesLocked,networkAdapterId=config.networkAdapterId,networkAdapterName=config.networkAdapterName,commandProtection=config.commandProtection});
                 lock(state) {config.apps=apps;staleDesktopPaths.Remove(previous.id);}
@@ -258,7 +258,7 @@ namespace IpGuard {
                     if(installing) {recovery.Add(()=>SystemPolicy.Unintercept(next));recovery.Add(()=>SystemPolicy.RemoveFirewall(next));}
                     recovery.Add(()=>SystemPolicy.Block(previous,true));
                     if(File.Exists(previous.path)) recovery.Add(()=>{
-                        try {PackagePolicy.Find(previous.path);SystemPolicy.Intercept(previous);}
+                        try {PackagePolicy.Find(previous.path);SystemPolicy.Intercept(previous,previous.enhanced ? EnhancementRoute : null);}
                         catch(PackageUnavailableException) { }
                     });
                     foreach(Action operation in recovery) {try {operation();}catch(Exception restore) {failures.Add(restore.GetBaseException().Message);}}
@@ -288,11 +288,11 @@ namespace IpGuard {
                 try {
                     EgressPolicy route=t.enhanced ? EnhancementRoute : config.egress;
                     if(route!=null && PackagePolicy.IsClaudeDesktop(t.path)) {DesktopProxyPolicy.Apply(route.Url);egressIssue="";}
-                    SystemPolicy.Block(t, true);SystemPolicy.Intercept(t);t.enabled = true;Data.Save(config);
+                    SystemPolicy.Block(t, true);SystemPolicy.Intercept(t,t.enhanced ? route : null);t.enabled = true;Data.Save(config);
                 }
                 catch {
                     SystemPolicy.Unintercept(t);SystemPolicy.RemoveFirewall(t);t.enabled = false;
-                    if(config.egress!=null && !config.apps.Any(a=>a.enabled && PackagePolicy.IsClaudeDesktop(a.path))) DesktopProxyPolicy.Restore();
+                    if(!config.apps.Any(a=>a.enabled && (a.enhanced || config.egress!=null) && PackagePolicy.IsClaudeDesktop(a.path))) DesktopProxyPolicy.Restore();
                     throw;
                 }
             } else {
@@ -408,18 +408,36 @@ namespace IpGuard {
                         if(enabled && enhancementPolicy==null) throw new Exception("通用代理通道尚未就绪。");
                         if(sessions.Any(s=>!s.stopped && s.enhanced && s.appId!=t.id)) throw new Exception("请先停止其他增强会话，再调整过滤范围。");
                         StopTarget(t.id);RequireClosed(t);
-                        if(config.commandProtection) StopCommandGuard();
                         if(enabled) EgressPolicy.ValidateTarget(t);
-                        t.enhanced=enabled;
-                        config.commandProtection=config.apps.Any(a=>a.enabled && a.enhanced);
-                        Data.Save(config);
-                        if(PackagePolicy.IsClaudeDesktop(t.path)) {
-                            if(enabled) DesktopProxyPolicy.Apply(EnhancementRoute.Url);
-                            else if(config.egress!=null) DesktopProxyPolicy.Apply(config.egress.Url);
-                            else DesktopProxyPolicy.Restore();
+                        bool previous=t.enhanced,previousProtection=config.commandProtection;
+                        bool desktop=PackagePolicy.IsClaudeDesktop(t.path);
+                        bool desktopPolicyAttempted=false,interceptionAttempted=false;
+                        try {
+                            if(config.commandProtection) StopCommandGuard();
+                            t.enhanced=enabled;
+                            config.commandProtection=config.apps.Any(a=>a.enabled && a.enhanced);
+                            SystemPolicy.Block(t,true);
+                            if(desktop) {
+                                desktopPolicyAttempted=true;
+                                DesktopProxyPolicy.Apply(enabled ? EnhancementRoute.Url : config.egress==null ? null : config.egress.Url);
+                                interceptionAttempted=true;
+                                SystemPolicy.Intercept(t,enabled ? EnhancementRoute : null);
+                            }
+                            if(config.commandProtection) LoadCommandGuard(true);
+                            Data.Save(config);
+                        } catch(Exception error) {
+                            t.enhanced=previous;config.commandProtection=previousProtection;
+                            try {
+                                if(commandGuard.Live) StopCommandGuard();
+                                SystemPolicy.Block(t,true);
+                                if(desktopPolicyAttempted)
+                                    DesktopProxyPolicy.Apply(previous ? EnhancementRoute.Url : config.egress==null ? null : config.egress.Url);
+                                if(interceptionAttempted)
+                                    SystemPolicy.Intercept(t,previous ? EnhancementRoute : null);
+                                if(config.commandProtection) LoadCommandGuard(true);
+                            } catch(Exception recovery) { throw new Exception("增强切换失败，原防护恢复也遇到错误："+error.GetBaseException().Message+"；"+recovery.GetBaseException().Message); }
+                            throw;
                         }
-                        SystemPolicy.Block(t,true);
-                        if(config.commandProtection) LoadCommandGuard(true);
                         Log("info",t.name+(enabled ? " · 已开启当前代理增强" : " · 已关闭增强，基础 IP 防护保留"));
                     }
                     else if(action == "protect") Protect(t, (bool)input["enabled"]);
@@ -656,7 +674,7 @@ namespace IpGuard {
                 }
                 foreach(Target t in config.apps.Where(t => t.enabled)) {
                     if(PackagePolicy.IsClaudeDesktop(t.path) && !File.Exists(t.path)) { staleDesktopPaths.Add(t.id);Log("warning",t.name+" · 安装目录已更新，请点击“更新路径”重新接管");continue; }
-                    try { Data.Validate(t,true);SystemPolicy.Intercept(t); }
+                    try { Data.Validate(t,true);SystemPolicy.Intercept(t,t.enhanced ? EnhancementRoute : null); }
                     catch(PackageUnavailableException) {
                         if(!PackagePolicy.IsClaudeDesktop(t.path)) throw;
                         staleDesktopPaths.Add(t.id);

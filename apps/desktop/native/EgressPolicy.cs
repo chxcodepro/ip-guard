@@ -35,7 +35,14 @@ namespace IpGuard {
             }
             values["NO_PROXY"]="";values["no_proxy"]="";
             values["CLAUDE_CODE_PROXY_RESOLVES_HOSTS"]="1";
+            values["NODE_USE_ENV_PROXY"]="1";
             return values;
+        }
+        internal static string PackageProxyEnvironment(EgressPolicy policy) {
+            // Windows requires a case-insensitively sorted environment block.
+            var values=new SortedDictionary<string,string>(StringComparer.OrdinalIgnoreCase);
+            foreach(var entry in ProxyVariables(policy)) values[entry.Key]=entry.Value;
+            return String.Join("\0",values.Select(entry=>entry.Key+"="+entry.Value))+"\0\0";
         }
         public EgressEnvironment(EgressPolicy policy,bool privateCli) {
             if(policy==null && !privateCli) return;

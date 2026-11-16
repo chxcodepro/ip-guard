@@ -241,14 +241,17 @@ namespace IpGuard.ProcessNetwork {
         static void ProxySettingsCases() {
             var proxy=EgressEnvironment.ProxyVariables(Egress());
             Check(new[] {"HTTP_PROXY","http_proxy","HTTPS_PROXY","https_proxy","ALL_PROXY","all_proxy"}.All(key=>proxy[key]=="http://127.0.0.1:23456"),"every proxy alias uses the guarded port");
-            Check(proxy["NO_PROXY"]=="" && proxy["no_proxy"]=="" && proxy["CLAUDE_CODE_PROXY_RESOLVES_HOSTS"]=="1","bypass lists clear and proxy handles DNS");
+            Check(proxy["NO_PROXY"]=="" && proxy["no_proxy"]=="" && proxy["CLAUDE_CODE_PROXY_RESOLVES_HOSTS"]=="1" && proxy["NODE_USE_ENV_PROXY"]=="1","bypass lists clear and Node uses the managed proxy");
+            string packageEnvironment=EgressEnvironment.PackageProxyEnvironment(Egress());
+            string[] packageVariables=packageEnvironment.TrimEnd('\0').Split('\0');
+            Check(packageEnvironment.EndsWith("\0\0",StringComparison.Ordinal) && packageVariables.Length==6 && packageVariables.SequenceEqual(packageVariables.OrderBy(value=>value,StringComparer.OrdinalIgnoreCase)) && packageVariables.All(value=>proxy.ContainsKey(value.Split('=')[0]) && proxy[value.Split('=')[0]]==value.Substring(value.IndexOf('=')+1)) && !packageEnvironment.Contains("PATH="),"packaged Desktop receives a sorted, proxy-only environment block");
             string original="{\"model\":\"deepseek-flash[1M]\",\"permissions\":{\"allow\":[\"Read\"]},\"env\":{\"ANTHROPIC_BASE_URL\":\"https://api.deepseek.com/anthropic\",\"ANTHROPIC_AUTH_TOKEN\":\"fixture-token\",\"HTTPS_PROXY\":\"http://127.0.0.1:21126\",\"https_proxy\":\"http://127.0.0.1:21126\",\"NO_PROXY\":\"*\",\"CUSTOM\":\"keep\"}}";
             var merged=Data.Json().Deserialize<Dictionary<string,object>>(ClaudeProxySettings.Merge(original,Egress()));
             var env=(Dictionary<string,object>)merged["env"];
             Check(env["HTTPS_PROXY"] as string==Egress().Url && env["https_proxy"] as string==Egress().Url && env["NO_PROXY"] as string=="","session settings override the old user proxy and bypass");
             Check(env["ANTHROPIC_BASE_URL"] as string=="https://api.deepseek.com/anthropic" && env["ANTHROPIC_AUTH_TOKEN"] as string=="fixture-token" && env["CUSTOM"] as string=="keep" && merged["model"] as string=="deepseek-flash[1M]" && merged.ContainsKey("permissions"),"DeepSeek endpoint, model, credentials and unrelated settings remain intact");
             var overlay=Data.Json().Deserialize<Dictionary<string,object>>(ClaudeProxySettings.Merge(null,Egress()));
-            Check(overlay.Count==1 && ((Dictionary<string,object>)overlay["env"]).Count==9,"default session overlay leaves provider settings to existing files");
+            Check(overlay.Count==1 && ((Dictionary<string,object>)overlay["env"]).Count==10,"default session overlay leaves provider settings to existing files");
             string[] prompt={"claude.exe","--system-prompt","--settings","--","--settings","message"};
             Check(ClaudeProxySettings.SettingsIndex(prompt)==-1,"settings-looking values and prompt text are never removed");
             string[] command={"claude.exe","--resume","--settings=custom.json","--model","deepseek-chat","--","message"};

@@ -25,10 +25,13 @@ namespace IpGuard {
         public static bool Admin { get { return new WindowsPrincipal(WindowsIdentity.GetCurrent()).IsInRole(WindowsBuiltInRole.Administrator); } }
         public static void RequireAdmin() { if (!Admin) throw new Exception("请以管理员身份运行 IP Guard。"); }
         static RegistryView[] Views { get { return new[] { RegistryView.Registry64, RegistryView.Registry32 }; } }
-        public static void Intercept(Target app) {
+        public static void Intercept(Target app,EgressPolicy proxy) {
             RequireAdmin(); Data.Validate(app, true);
             PackageIdentity package=PackagePolicy.Find(app.path);
-            if(package!=null) { Unintercept(app); PackagePolicy.Enable(app,package); return; }
+            if(package!=null) {
+                if(app.enhanced && proxy==null) throw new Exception("增强代理通道尚未就绪。");
+                Unintercept(app); PackagePolicy.Enable(app,package,proxy); return;
+            }
             string debugger=TerminalProcess.IsConsole(app.path) ? Path.Combine(Path.GetDirectoryName(Exe),"IpGuard.Terminal.exe") : Exe;
             if(!File.Exists(debugger)) throw new Exception("启动门卫安装不完整，请重新安装 IP Guard。");
             foreach (RegistryView view in Views) {

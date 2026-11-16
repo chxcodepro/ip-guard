@@ -103,18 +103,23 @@ namespace IpGuard {
             }
             using(RegistryKey machine=Registry.LocalMachine.OpenSubKey(key)) return machine==null ? null : machine.GetValue("DebugPath") as string;
         }
-        public static void Enable(Target target, PackageIdentity package) {
+        public static void Enable(Target target, PackageIdentity package, EgressPolicy proxy) {
             string command=Data.Quote(SystemPolicy.Exe)+" package-gate "+target.id;
             if(command.Length>210) throw new Exception("IP Guard 安装路径过长，请安装到较短路径后启用 Desktop 防护。");
+            string proxyEnvironment=proxy==null ? null : EgressEnvironment.PackageProxyEnvironment(proxy);
             string prior=DebugPath(package.fullName);
             if(!String.IsNullOrEmpty(prior)) throw new Exception("此安装包已有调试启动配置，请先解除现有配置。");
             using(RegistryKey marker=Registry.CurrentUser.CreateSubKey(Owned+"\\"+target.id)) {
                 marker.SetValue("Owner",SystemPolicy.Owner); marker.SetValue("Package",package.fullName); marker.SetValue("Command",command);
             }
-            IPackageDebugSettings settings=Debugger();
-            try { Marshal.ThrowExceptionForHR(settings.EnableDebugging(package.fullName,command,IntPtr.Zero)); }
+            IPackageDebugSettings settings=null;IntPtr environment=IntPtr.Zero;
+            try {
+                if(proxyEnvironment!=null) environment=Marshal.StringToHGlobalUni(proxyEnvironment);
+                settings=Debugger();
+                Marshal.ThrowExceptionForHR(settings.EnableDebugging(package.fullName,command,environment));
+            }
             catch { Registry.CurrentUser.DeleteSubKeyTree(Owned+"\\"+target.id,false); throw; }
-            finally { Marshal.ReleaseComObject(settings); }
+            finally { if(environment!=IntPtr.Zero) Marshal.FreeHGlobal(environment); if(settings!=null) Marshal.ReleaseComObject(settings); }
         }
         public static void Disable(string id) {
             string package, command;
