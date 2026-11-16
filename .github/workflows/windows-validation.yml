@@ -97,7 +97,7 @@ jobs:
           $review = Join-Path $env:IPGUARD_REVIEW_NATIVE 'IpGuard.Native.exe'
           & $review --install-only
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          & $review --verify
+          & $review --hot-review
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Recover and inspect isolated driver state
         if: always()

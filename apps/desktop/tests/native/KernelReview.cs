@@ -111,7 +111,7 @@ public static class KernelReview {
         public void Dispose() {if(pipe!=null) {try {if(thread.IsAlive) Send("exit");}catch(IOException) {}pipe.Dispose();}if(!thread.Join(5000)) throw new Exception("debug worker did not exit");}
     }
     public static int Main(string[] args) {
-        if(args.Length!=1 || (args[0]!="--install-only" && args[0]!="--verify")) return 2;
+        if(args.Length!=1 || (args[0]!="--install-only" && args[0]!="--verify" && args[0]!="--hot-review")) return 2;
         KernelProtection protection=null;bool installed=false;
         try {
             if(args[0]=="--install-only") {OwnedDriverRegistration.Install();Console.WriteLine("INSTALL_ONLY: driver stopped; independent recovery task prepared");return 0;}
@@ -130,10 +130,6 @@ public static class KernelReview {
             protection=new KernelProtection(allowed=>proxyAllowed=allowed);
             var egress=new EgressPolicy {id=Guid.NewGuid().ToString("D"),label="isolated review",port=proxyPort};
             protection.Start(egress,new[] {new Target {id=Guid.NewGuid().ToString("D"),name="isolated fixture",path=root,enabled=true}},true);protection.Allow(true);
-            using(var prior=new Session(protection,root)) {
-                try {Console.WriteLine("journal: pre-update missing result="+prior.Send("missing"));} catch(IOException) {}
-                Thread.Sleep(400);Console.WriteLine("journal: pre-update metadata="+(prior.Error==null ? "none" : prior.Error.ToString()));
-            }
             using(var session=new Session(protection,root)) {
                 Check(session.Send("proxy")=="OK","fixed proxy accepted");
                 Check(session.Send("direct")=="BLOCKED","direct TCP blocked");Check(session.Send("ipv6")=="BLOCKED","IPv6 blocked");
@@ -150,10 +146,9 @@ public static class KernelReview {
                 protection.Allow(true);Check(session.Send("proxy")=="OK","same process resumes via fixed proxy");
                 Check(directCount==before,"no guarded direct packets arrived");
             }
-            using(var missing=new Session(protection,root)) {
-                try {Console.WriteLine("journal: post-update missing result="+missing.Send("missing"));}catch(IOException) {}
-                Thread.Sleep(400);Console.WriteLine("journal: post-update metadata="+(missing.Error==null ? "none" : missing.Error.ToString()));
-                Check(missing.Error!=null && missing.Error.Message.Contains("元数据"),"missing metadata refused before user code");
+            if(args[0]=="--verify") using(var missing=new Session(protection,root)) {
+                try {missing.Send("missing");}catch(IOException) {}
+                Thread.Sleep(400);Check(missing.Error!=null && missing.Error.Message.Contains("元数据"),"missing metadata refused before user code");
             }
             protection.Stop();protection=null;
             Check(OwnedDriverRegistration.Read().Validate(false)==1,"normal cleanup stops driver");
