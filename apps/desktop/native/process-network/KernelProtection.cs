@@ -21,6 +21,7 @@ namespace IpGuard.ProcessNetwork {
         volatile string failure="";
         bool supported;
         bool starting;
+        bool activeLoopbackDirect;
         int[] activeLocalPorts=new int[0];
         public KernelProtection(Action<bool> setGate) {
             this.setGate=setGate;
@@ -67,7 +68,7 @@ namespace IpGuard.ProcessNetwork {
             FortEnvironment.ReadPlatform().RequirePlatform();
             if(egress==null) throw new Exception("请先启用固定出口。");
             string[] paths=targets.Where(t=>t.enabled).Select(t=>{EgressPolicy.ValidateTarget(t);return ProcessTreeMetadata.CanonicalPath(t.path);}).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
-            var policy=new FortPolicy(egress,paths,SystemPolicy.LocalDevPorts);policy.Configuration();
+            var policy=new FortPolicy(egress,paths,SystemPolicy.LoopbackDirect,SystemPolicy.LoopbackExceptionPorts);policy.Configuration();
             var record=OwnedDriverRegistration.Read();if(record==null) throw new Exception("请先安装命令防护驱动。");
             if(record.RecoveryPending) {
                 if(!recover) throw new Exception("命令防护已进入恢复，请在设置中确认恢复后重新加载。");
@@ -84,7 +85,7 @@ namespace IpGuard.ProcessNetwork {
                 jobs=new ProtectedJobs(runtime.WriteJobs);
                 controller=new ProcessNetworkController(device,policy,jobs,setGate);
                 roots.Clear();foreach(string path in paths) roots.Add(path);
-                activeLocalPorts=policy.LocalPorts;failure="";runtime.Ready();
+                activeLoopbackDirect=SystemPolicy.LoopbackDirect;activeLocalPorts=policy.LocalPorts;failure="";runtime.Ready();
             } catch(Exception error) {
                 failure=error.Message;
                 if(acquired==null) throw;
@@ -115,11 +116,11 @@ namespace IpGuard.ProcessNetwork {
         public void Register(string name,IntPtr job) {if(!Live) throw new Exception("命令防护未就绪。");jobs.Register(name,job);}
         public void Unregister(string name) {if(jobs!=null) jobs.Unregister(name);}
         public void Allow(bool allowed) {if(Live) controller.SetReady(allowed);}
-        public void UpdateLocalPorts(EgressPolicy egress,int[] ports) {
+        public void UpdateLoopbackPolicy(EgressPolicy egress,bool loopbackDirect,int[] ports) {
             if(!Live) throw new InvalidOperationException("命令防护未就绪，暂无法更新本机端口。");
-            var previous=new FortPolicy(egress,roots,activeLocalPorts);
-            var next=new FortPolicy(egress,roots,ports);
-            try {controller.Replace(previous,next);activeLocalPorts=next.LocalPorts;}
+            var previous=new FortPolicy(egress,roots,activeLoopbackDirect,activeLocalPorts);
+            var next=new FortPolicy(egress,roots,loopbackDirect,ports);
+            try {controller.Replace(previous,next);activeLoopbackDirect=loopbackDirect;activeLocalPorts=next.LocalPorts;}
             catch(Exception error) {if(controller.Phase==ControllerPhase.Faulted) SetFailure("本机端口规则恢复失败："+error.GetBaseException().Message);throw;}
         }
         public string HealthError() {

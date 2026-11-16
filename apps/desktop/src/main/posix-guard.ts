@@ -80,7 +80,7 @@ export class PosixGuard extends EventEmitter<{ snapshot: [Snapshot]; identity: [
   private sessions = new Map<string, SessionRecord>();
   readonly snapshot: Snapshot = {
     platform: this.platform,
-    networkPolicy: { revision: randomUUID(), localPorts: [] },
+    networkPolicy: { revision: randomUUID(), loopbackDirect: true, localPorts: [] },
     enhancementReady: false,
     enhancementReason: "系统级进程树过滤正在移植",
     enhancementPhase: "idle",

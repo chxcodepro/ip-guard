@@ -71,7 +71,11 @@ import { UpdatePanel } from "#src/components/update-panel.tsx";
 import "#src/guard.css";
 
 const initial: Snapshot = {
-  networkPolicy: { revision: "b0c7e969-e7e6-470f-9628-d9b82d8cc0ee", localPorts: [] },
+  networkPolicy: {
+    revision: "b0c7e969-e7e6-470f-9628-d9b82d8cc0ee",
+    loopbackDirect: true,
+    localPorts: [],
+  },
   enhancementReady: false,
   enhancementReason: "等待增强出口复核",
   enhancementPhase: "idle",

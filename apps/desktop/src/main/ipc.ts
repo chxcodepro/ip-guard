@@ -7,7 +7,7 @@ import {
   commandSchema,
   desktopChannels,
   isClaudeDesktopPath,
-  localPolicyPorts,
+  localExceptionPorts,
 } from "@ip-guard/electron";
 import type { Reply, Snapshot } from "@ip-guard/electron";
 
@@ -90,7 +90,8 @@ export const setupIpc = (
         if (!snapshot.admin) throw new Error("请以管理员身份管理拦截策略。");
         const next = networkPolicies.prepare(command.settings),
           previous = networkPolicies.record;
-        const ports = localPolicyPorts(next.settings);
+        const ports = localExceptionPorts(next.settings);
+        const loopbackOpened = !previous.settings.loopbackDirect && next.settings.loopbackDirect;
         const reload =
           snapshot.apps.some((app) => app.enabled && app.enhanced) && !snapshot.driver.ready;
         const direct = next.settings.rules.filter(
@@ -105,7 +106,7 @@ export const setupIpc = (
                 old.port === rule.port,
             ),
         );
-        if (reload || direct.length) {
+        if (reload || loopbackOpened || direct.length) {
           const affected = snapshot.apps
             .filter((app) => app.enabled && app.enhanced)
             .map((app) => app.name);
@@ -114,14 +115,19 @@ export const setupIpc = (
             title: "应用拦截策略",
             message: reload
               ? "结束增强会话并重载过滤器？"
-              : direct.every((rule) => rule.host === "localhost")
-                ? "放行本机开发端口？"
-                : "允许这些目标直连？",
+              : loopbackOpened
+                ? "默认放行全部本机回环？"
+                : direct.every((rule) => rule.host === "localhost")
+                  ? "放行本机开发端口？"
+                  : "允许这些目标直连？",
             detail: [
               reload
                 ? "受影响：" +
                   affected.join("、") +
                   "。请先保存工作。过滤器重载可能短暂影响联网，驱动仍处于实验阶段。"
+                : "",
+              loopbackOpened
+                ? "localhost、127.* 和 ::1 的所有端口将直连本机服务，也可连接其他本地代理并绕开固定出口。"
                 : "",
               direct.length
                 ? "新增直连：" +
@@ -151,7 +157,11 @@ export const setupIpc = (
         let applied: Snapshot;
         try {
           applied = await guardian.request("network:apply", {
-            policy: { revision: next.revision, localPorts: ports },
+            policy: {
+              revision: next.revision,
+              loopbackDirect: next.settings.loopbackDirect,
+              localPorts: ports,
+            },
           });
         } catch (error) {
           let nativeRestoreError: unknown;
@@ -161,7 +171,8 @@ export const setupIpc = (
               await guardian.request("network:apply", {
                 policy: {
                   revision: previous.revision,
-                  localPorts: localPolicyPorts(previous.settings),
+                  loopbackDirect: previous.settings.loopbackDirect,
+                  localPorts: localExceptionPorts(previous.settings),
                 },
               });
           } catch (restoreError) {
@@ -169,7 +180,8 @@ export const setupIpc = (
           }
           guardian.networkPolicy = {
             revision: previous.revision,
-            localPorts: localPolicyPorts(previous.settings),
+            loopbackDirect: previous.settings.loopbackDirect,
+            localPorts: localExceptionPorts(previous.settings),
           };
           try {
             await networkPolicies.write(previous, false);
@@ -186,7 +198,11 @@ export const setupIpc = (
           }
           throw error;
         }
-        guardian.networkPolicy = { revision: next.revision, localPorts: ports };
+        guardian.networkPolicy = {
+          revision: next.revision,
+          loopbackDirect: next.settings.loopbackDirect,
+          localPorts: ports,
+        };
         networkPolicies.commit(next);
         committed = true;
         fixedEgress.policyChanged();

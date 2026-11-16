@@ -86,6 +86,7 @@ describe.runIf(process.platform !== "win32")("POSIX managed sessions", () => {
     policies.commit({
       revision: randomUUID(),
       settings: networkPolicySchema.parse({
+        loopbackDirect: false,
         rules: [
           {
             id: randomUUID(),

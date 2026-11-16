@@ -11,7 +11,11 @@ import type { Snapshot } from "@ip-guard/electron";
 import { detectProtectionEvent } from "./protection-event.ts";
 
 const running: Snapshot = {
-  networkPolicy: { revision: "b0c7e969-e7e6-470f-9628-d9b82d8cc0ee", localPorts: [] },
+  networkPolicy: {
+    revision: "b0c7e969-e7e6-470f-9628-d9b82d8cc0ee",
+    loopbackDirect: true,
+    localPorts: [],
+  },
   enhancementReady: false,
   enhancementReason: "等待增强出口复核",
   enhancementPhase: "idle",

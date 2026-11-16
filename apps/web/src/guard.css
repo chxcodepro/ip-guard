@@ -1218,6 +1218,19 @@ textarea::placeholder {
   font-weight: 400;
   margin-left: 5px;
 }
+.policy-loopback-default {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin-bottom: 18px;
+  font-size: 13px;
+  font-weight: 600;
+}
+.policy-loopback-default input {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--g-accent);
+}
 .policy-facts {
   display: grid;
   grid-template-columns: 1fr 1fr;
