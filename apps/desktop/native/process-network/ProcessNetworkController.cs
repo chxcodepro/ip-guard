@@ -33,6 +33,22 @@ namespace IpGuard.ProcessNetwork {
                 try {setGate(ready);phase=ready ? ControllerPhase.Ready : ControllerPhase.Paused;} catch(Exception error) {Fail(error);throw;}
             }
         }
+        public void Replace(FortPolicy previous,FortPolicy next) {
+            FortRequest restore=previous.Configuration(),apply=next.Configuration();
+            lock(sync) {
+                SetReady(false);
+                try {device.Send(apply);}
+                catch(Exception error) {
+                    // Fort swaps the configuration before reauthorization, so even a failed IOCTL may have applied it.
+                    try {device.Send(restore);}
+                    catch(Exception recovery) {
+                        var failure=new AggregateException("本机端口规则恢复失败，连接保持封锁。",error,recovery);
+                        Fail(failure);throw failure;
+                    }
+                    throw;
+                }
+            }
+        }
         public void DriverFault(Exception cause) {if(cause==null) throw new ArgumentNullException("cause");lock(sync) {if(phase!=ControllerPhase.Stopped) Fail(cause);}}
         public void BeginDrain() {
             lock(sync) {

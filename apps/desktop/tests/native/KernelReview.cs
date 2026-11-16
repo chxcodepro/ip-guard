@@ -135,6 +135,12 @@ public static class KernelReview {
                 Check(session.Send("direct")=="BLOCKED","direct TCP blocked");Check(session.Send("ipv6")=="BLOCKED","IPv6 blocked");
                 Check(session.Send("child")=="BLOCKED","child first network request blocked");
                 session.Send("udp");Thread.Sleep(200);Check(udpCount==0,"UDP blocked");
+                protection.UpdateLocalPorts(egress,new[] {directPort});
+                Check(session.Send("direct")=="OK","live local-port update allows the same guarded process");
+                using(Process same=Process.GetProcessById((int)session.Pid)) Check(!same.HasExited,"live update retains the protected PID");
+                before=directCount;
+                protection.UpdateLocalPorts(egress,new int[0]);
+                Check(session.Send("direct")=="BLOCKED","live local-port removal blocks new traffic without restarting Claude");
                 protection.Allow(false);Check(session.Send("proxy")=="BLOCKED","pause closes proxy forwarding");
                 using(Process same=Process.GetProcessById((int)session.Pid)) Check(!same.HasExited,"pause retains process");
                 protection.Allow(true);Check(session.Send("proxy")=="OK","same process resumes via fixed proxy");

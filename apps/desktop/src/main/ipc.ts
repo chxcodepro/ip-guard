@@ -83,6 +83,8 @@ export const setupIpc = (
       if (configuringPolicy || configuringKernel || configuringEgress)
         throw new Error("过滤配置正在处理中，请稍后重试。");
       configuringPolicy = true;
+      let started = false,
+        committed = false;
       try {
         const snapshot = await guardian.request("status");
         if (!snapshot.admin) throw new Error("请以管理员身份管理拦截策略。");
@@ -90,8 +92,7 @@ export const setupIpc = (
           previous = networkPolicies.record;
         const ports = localPolicyPorts(next.settings);
         const reload =
-          snapshot.apps.some((app) => app.enabled && app.enhanced) &&
-          (!snapshot.driver.ready || ports.join(",") !== snapshot.networkPolicy.localPorts.join(","));
+          snapshot.apps.some((app) => app.enabled && app.enhanced) && !snapshot.driver.ready;
         const direct = next.settings.rules.filter(
           (rule) =>
             rule.enabled &&
@@ -111,7 +112,11 @@ export const setupIpc = (
           const answer = await dialog.showMessageBox({
             type: "warning",
             title: "应用拦截策略",
-            message: reload ? "结束增强会话并重载本机端口规则？" : "允许这些目标直连？",
+            message: reload
+              ? "结束增强会话并重载过滤器？"
+              : direct.every((rule) => rule.host === "localhost")
+                ? "放行本机开发端口？"
+                : "允许这些目标直连？",
             detail: [
               reload
                 ? "受影响：" +
@@ -121,7 +126,13 @@ export const setupIpc = (
               direct.length
                 ? "新增直连：" +
                   direct.map((rule) => rule.host + ":" + rule.port).join("、") +
-                  "。公网直连可能暴露原公网 IP；本机端口只应指向可信开发服务，代理或转发服务也可能绕过固定出口。"
+                  "。" +
+                  (direct.some((rule) => rule.host !== "localhost")
+                    ? "公网直连可能暴露原公网 IP。"
+                    : "") +
+                  (direct.some((rule) => rule.host === "localhost")
+                    ? "本机代理或转发服务可能绕过固定出口。"
+                    : "")
                 : "",
             ]
               .filter(Boolean)
@@ -132,21 +143,30 @@ export const setupIpc = (
           });
           if (answer.response !== 1) return { cancelled: true, networkPolicy: policyState() };
         }
+        started = true;
         networkPolicies.applying = true;
         fixedEgress.setAllowed(false);
         proxyEnhancement.setAllowed(false);
         await networkPolicies.write(next);
+        let applied: Snapshot;
         try {
-          const applied = await guardian.request("network:apply", {
+          applied = await guardian.request("network:apply", {
             policy: { revision: next.revision, localPorts: ports },
           });
-          guardian.networkPolicy = { revision: next.revision, localPorts: ports };
-          networkPolicies.commit(next);
-          fixedEgress.policyChanged();
-          proxyEnhancement.policyChanged();
-          void proxyEnhancement.refresh();
-          return { snapshot: applied, networkPolicy: policyState() };
         } catch (error) {
+          let nativeRestoreError: unknown;
+          try {
+            const observed = await guardian.request("status");
+            if (observed.networkPolicy.revision === next.revision)
+              await guardian.request("network:apply", {
+                policy: {
+                  revision: previous.revision,
+                  localPorts: localPolicyPorts(previous.settings),
+                },
+              });
+          } catch (restoreError) {
+            nativeRestoreError = restoreError;
+          }
           guardian.networkPolicy = {
             revision: previous.revision,
             localPorts: localPolicyPorts(previous.settings),
@@ -159,11 +179,28 @@ export const setupIpc = (
             networkPolicies.fail(detail);
             throw new AggregateError([error, restoreError], detail);
           }
+          if (nativeRestoreError) {
+            const detail = "策略应用失败，原生过滤状态尚未确认；连接保持暂停，请重新应用。";
+            networkPolicies.fail(detail);
+            throw new AggregateError([error, nativeRestoreError], detail);
+          }
           throw error;
         }
+        guardian.networkPolicy = { revision: next.revision, localPorts: ports };
+        networkPolicies.commit(next);
+        committed = true;
+        fixedEgress.policyChanged();
+        proxyEnhancement.policyChanged();
+        void proxyEnhancement.refresh();
+        return { snapshot: applied, networkPolicy: policyState() };
       } finally {
         networkPolicies.applying = false;
         configuringPolicy = false;
+        if (started && !committed) {
+          fixedEgress.policyChanged();
+          proxyEnhancement.policyChanged();
+          void proxyEnhancement.refresh();
+        }
       }
     }
     const verifyEnhancement = async () => {

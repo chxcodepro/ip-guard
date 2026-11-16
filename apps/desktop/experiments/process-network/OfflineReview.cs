@@ -10,9 +10,16 @@ namespace IpGuard.ProcessNetwork {
         sealed class Device : IFortDevice {
             public FortEnvironment environment=new FortEnvironment(true,false,false,true,true,true);
             public readonly List<FortRequest> requests=new List<FortRequest>();
-            public int failAt;
+            public int attempts,failAt,failAgainAt;
+            public bool applyBeforeFailure;
             public FortEnvironment Environment {get {return environment;}}
-            public void Send(FortRequest request) {if(requests.Count+1==failAt) throw new IOException("driver rejected request");requests.Add(request);}
+            public void Send(FortRequest request) {
+                attempts++;
+                bool fail=attempts==failAt || attempts==failAgainAt;
+                if(fail && !applyBeforeFailure) throw new IOException("driver rejected request");
+                requests.Add(request);
+                if(fail) throw new IOException("driver rejected request after applying it");
+            }
         }
         sealed class Jobs : IProtectedJobs {
             public bool active,sealedRegistry;
@@ -73,6 +80,18 @@ namespace IpGuard.ProcessNetwork {
             var failure=new Device {failAt=2};var events=new List<bool>();
             Throws<IOException>(()=>new ProcessNetworkController(failure,Policy(),new Jobs(),v=>events.Add(v)),"kernel configuration refusal propagates");
             Check(!events.Last(),"configuration refusal keeps gate closed");
+            var liveDevice=new Device();var liveJobs=new Jobs();var liveGate=new List<bool>();
+            var live=new ProcessNetworkController(liveDevice,Policy(),liveJobs,v=>liveGate.Add(v));
+            var local=new FortPolicy(Egress(),new[] {@"C:\apps\claude.exe"},new[] {5173});
+            liveJobs.active=true;
+            live.SetReady(true);live.Replace(Policy(),local);
+            Check(liveDevice.requests.Count==3 && liveJobs.active && !liveJobs.sealedRegistry && live.Phase==ControllerPhase.Paused && !liveGate.Last(),"live port update retains the protected process and pauses forwarding");
+            live.SetReady(true);liveDevice.failAt=4;liveDevice.applyBeforeFailure=true;
+            Throws<IOException>(()=>live.Replace(local,new FortPolicy(Egress(),new[] {@"C:\apps\claude.exe"},new[] {3000})),"driver failure after configuration swap is reported");
+            Check(liveDevice.requests.Count==5 && Hex(liveDevice.requests.Last().CopyPayload())==Hex(local.Configuration().CopyPayload()) && liveJobs.active && live.Phase==ControllerPhase.Paused,"failed live update restores the previous rule while keeping Claude running");
+            liveDevice.failAt=6;liveDevice.failAgainAt=7;
+            Throws<AggregateException>(()=>live.Replace(local,new FortPolicy(Egress(),new[] {@"C:\apps\claude.exe"},new[] {3000})),"failed rollback faults the controller");
+            Check(live.Phase==ControllerPhase.Faulted && !liveGate.Last(),"failed rollback never reopens forwarding");
             var faultGate=new List<bool>();var fault=new ProcessNetworkController(new Device(),Policy(),new Jobs(),v=>faultGate.Add(v));
             fault.SetReady(true);fault.DriverFault(new IOException("offline"));
             Check(!faultGate.Last() && fault.Phase==ControllerPhase.Faulted,"driver fault closes existing forwarding");
