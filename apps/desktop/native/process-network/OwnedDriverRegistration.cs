@@ -2,6 +2,7 @@ using System;
 using System.ComponentModel;
 using System.IO;
 using System.Runtime.InteropServices;
+using System.Security.AccessControl;
 using System.Security.Principal;
 using System.Threading;
 using Microsoft.Win32;
@@ -185,6 +186,18 @@ namespace IpGuard.ProcessNetwork {
             using(RegistryKey machine=RegistryKey.OpenBaseKey(RegistryHive.LocalMachine,RegistryView.Registry64))
             using(RegistryKey key=machine.OpenSubKey(Marker,true)) {if(key==null) throw new InvalidDataException("自有记录缺失。");key.SetValue("RecoveryPending",0,RegistryValueKind.DWord);key.Flush();}
         }
-        public static Mutex OperationMutex() {return new Mutex(false,@"Global\IPGuard-CommandProtection-Operation");}
+        public static Mutex OperationMutex() {return OperationMutex(@"Global\IPGuard-CommandProtection-Operation");}
+        internal static Mutex OperationMutex(string name) {
+            var acl=new MutexSecurity();acl.SetAccessRuleProtection(true,false);
+            foreach(var sid in new[] {new SecurityIdentifier(WellKnownSidType.LocalSystemSid,null),new SecurityIdentifier(WellKnownSidType.BuiltinAdministratorsSid,null),new SecurityIdentifier(SystemPolicy.Sid)})
+                acl.AddAccessRule(new MutexAccessRule(sid,MutexRights.FullControl,AccessControlType.Allow));
+            for(int attempt=0;attempt<100;attempt++) {
+                // Existing SYSTEM-created mutexes may deny FullControl while still allowing wait and release.
+                try {return Mutex.OpenExisting(name,MutexRights.Synchronize|MutexRights.Modify);} catch(WaitHandleCannotBeOpenedException) {} catch(UnauthorizedAccessException) {}
+                try {bool created;return new Mutex(false,name,out created,acl);} catch(UnauthorizedAccessException) {}
+                Thread.Sleep(100);
+            }
+            throw new UnauthorizedAccessException("驱动恢复互斥对象权限冲突，命令防护保持关闭。");
+        }
     }
 }

@@ -26,6 +26,7 @@ import { MihomoResolver } from "./mihomo.ts";
 import type { ProxyEndpoint } from "./proxy-tunnel.ts";
 
 const execute = promisify(execFile);
+const discoveryTimeoutMs = 15000;
 const sourceSchema = z.object({
   executable: z.string(),
   config: z.string(),
@@ -65,6 +66,7 @@ export function inboundPorts(input: unknown): number[] {
 const discovery = String.raw`
 $ErrorActionPreference='Stop'
 [Console]::OutputEncoding=[Text.UTF8Encoding]::new($false)
+trap { [Console]::Error.WriteLine('IPGUARD_DISCOVERY: '+$_.Exception.Message); exit 1 }
 $port=[int]$env:IPGUARD_PROXY_PORT
 if($env:IPGUARD_CONTROLLER_PIPE) {
   if(-not $env:IPGUARD_CONTROLLER_PIPE.StartsWith('\\.\pipe\',[StringComparison]::OrdinalIgnoreCase)){throw 'Local controller pipe required'}
@@ -92,14 +94,17 @@ public static class IPGuardPipeOwner {
   if($cores.Count -ne 1) {throw 'One running proxy core is required without a system proxy port'}
   $process=$cores[0]
 } else {
-  $ids=@(Get-NetTCPConnection -LocalPort $port -State Listen | Select-Object -ExpandProperty OwningProcess -Unique)
+  $ids=@(Get-NetTCPConnection -State Listen | Where-Object LocalPort -eq $port | Select-Object -ExpandProperty OwningProcess -Unique)
+  if($ids.Count -eq 0) { throw 'Proxy listener is unavailable' }
   if($ids.Count -ne 1) { throw 'Proxy listener owner is ambiguous' }
   $process=Get-CimInstance Win32_Process -Filter ('ProcessId='+[int]$ids[0])
 }
 if($env:IPGUARD_EXPECTED_IMAGE) {
+  if(-not $process) { throw 'Proxy listener process exited' }
   @{executable=$process.ExecutablePath;pid=[int]$process.ProcessId} | ConvertTo-Json -Compress
   exit 0
 }
+if(-not $process) { throw 'Proxy listener process exited' }
 if($process.Name -match '^(mihomo(?:-.+)?|verge-mihomo(?:-.+)?|clash(?:-meta|\.meta)?)\.exe$') {
   $f=[regex]::Matches($process.CommandLine,'(?i)(?:^|\s)-f(?:=|\s+)(?:"([^"]+)"|(\S+))')
   $d=[regex]::Matches($process.CommandLine,'(?i)(?:^|\s)-d(?:=|\s+)(?:"([^"]+)"|(\S+))')
@@ -128,6 +133,27 @@ $config=@($candidates | Where-Object {Test-Path -LiteralPath $_ -PathType Leaf})
 if($config.Count -ne 1) { throw 'Active configuration cannot be resolved' }
 @{executable=$process.ExecutablePath;config=[IO.Path]::GetFullPath($config[0]);pid=[int]$process.ProcessId} | ConvertTo-Json -Compress
 `;
+
+export function proxyDiscoveryIssue(error: unknown): string {
+  if (error && typeof error === "object") {
+    if (Reflect.get(error, "killed") === true) return "代理核心查询超时，请稍后重试";
+    const stderr = Reflect.get(error, "stderr");
+    if (typeof stderr === "string") {
+      const reason = /IPGUARD_DISCOVERY: ([^\r\n]+)/u.exec(stderr)?.[1]?.trim();
+      if (reason === "Proxy listener is unavailable")
+        return "本机代理端口尚未监听，等待代理核心启动";
+      if (reason === "Proxy listener process exited") return "代理核心已退出，请稍后重试";
+      if (reason === "Proxy listener owner is ambiguous") return "本机代理端口归属不唯一";
+      if (reason === "One explicit configuration file is required")
+        return "Xray / sing-box 启动参数缺少唯一配置文件";
+      if (reason === "Active configuration cannot be resolved") return "代理运行配置文件未找到";
+      if (reason === "Relative configuration requires a supported client layout")
+        return "代理核心使用了尚未支持的相对配置路径";
+      if (reason === "Unsupported proxy core") return "本机代理端口由尚未支持的程序监听";
+    }
+  }
+  return "本机代理进程查询失败，请稍后重试";
+}
 
 export type ProxySource = { executable: string; config: string; node: NodeSnapshot; key: string };
 export function proxyEngine(executable: string): NodeSnapshot["engine"] | undefined {
@@ -200,7 +226,7 @@ export class ForcedProxy {
         ["-NoProfile", "-NonInteractive", "-Command", discovery],
         {
           windowsHide: true,
-          timeout: 6000,
+          timeout: discoveryTimeoutMs,
           maxBuffer: 8192,
           env: {
             ...process.env,
@@ -286,7 +312,7 @@ export class ForcedProxy {
           ["-NoProfile", "-NonInteractive", "-Command", discovery],
           {
             windowsHide: true,
-            timeout: 6000,
+            timeout: discoveryTimeoutMs,
             maxBuffer: 8192,
             env: {
               ...process.env,
@@ -300,10 +326,8 @@ export class ForcedProxy {
         this.metadata = sourceSchema.parse(input);
         this.metadataPort = upstream.port;
         this.discoveredAt = performance.now();
-      } catch {
-        throw new Error(
-          "尚未找到可自动管理的本机 Xray / sing-box / Mihomo 配置，增强保持暂停；请检查核心入口与文件配置",
-        );
+      } catch (error) {
+        throw new Error(`增强保持暂停：${proxyDiscoveryIssue(error)}`);
       }
     }
     const { executable, config } = this.metadata;
@@ -334,7 +358,7 @@ export class ForcedProxy {
           ["-NoProfile", "-NonInteractive", "-Command", discovery],
           {
             windowsHide: true,
-            timeout: 6000,
+            timeout: discoveryTimeoutMs,
             maxBuffer: 8192,
             env: {
               ...process.env,
@@ -438,7 +462,7 @@ export class ForcedProxy {
               ["-NoProfile", "-NonInteractive", "-Command", discovery],
               {
                 windowsHide: true,
-                timeout: 6000,
+                timeout: discoveryTimeoutMs,
                 maxBuffer: 8192,
                 env: {
                   ...process.env,

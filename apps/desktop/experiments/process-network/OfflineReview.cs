@@ -3,6 +3,9 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Runtime.InteropServices;
+using System.Security.AccessControl;
+using System.Security.Principal;
+using System.Threading;
 
 namespace IpGuard.ProcessNetwork {
     internal static class OfflineReview {
@@ -193,10 +196,28 @@ namespace IpGuard.ProcessNetwork {
             Check(!Data.MigrateModelTest(unchanged,new Dictionary<string,object>()),"current configuration has no repeat migration");
             Throws<Exception>(()=>Data.MigrateModelTest(unchanged,new Dictionary<string,object> {{"protectAllModels","true"}}),"invalid retired field is not silently ignored");
         }
+        static void MutexCases() {
+            string name=@"Global\IPGuard-OfflineReview-"+Guid.NewGuid().ToString("N");
+            using(Mutex operation=OwnedDriverRegistration.OperationMutex(name)) {
+                var rules=operation.GetAccessControl().GetAccessRules(true,false,typeof(SecurityIdentifier));
+                Check(rules.Cast<MutexAccessRule>().Any(rule=>rule.IdentityReference.Value==new SecurityIdentifier(WellKnownSidType.LocalSystemSid,null).Value && rule.MutexRights==MutexRights.FullControl),"SYSTEM can coordinate driver recovery");
+                Check(rules.Cast<MutexAccessRule>().Any(rule=>rule.IdentityReference.Value==new SecurityIdentifier(WellKnownSidType.BuiltinAdministratorsSid,null).Value && rule.MutexRights==MutexRights.FullControl),"elevated guardian can coordinate driver recovery");
+                using(Mutex peer=Mutex.OpenExisting(name,MutexRights.Synchronize|MutexRights.Modify)) {
+                    Check(peer.WaitOne(0),"recovery peer can acquire the operation mutex");peer.ReleaseMutex();
+                }
+            }
+            var limited=new MutexSecurity();
+            limited.AddAccessRule(new MutexAccessRule(WindowsIdentity.GetCurrent().User,MutexRights.Synchronize|MutexRights.Modify,AccessControlType.Allow));
+            bool created;
+            using(Mutex legacy=new Mutex(false,name+"-legacy",out created,limited))
+            using(Mutex peer=OwnedDriverRegistration.OperationMutex(name+"-legacy")) {
+                Check(peer.WaitOne(0),"legacy SYSTEM-style mutex opens with required rights");peer.ReleaseMutex();
+            }
+        }
         public static int Main(string[] args) {
             if(args.Length!=1 || args[0]!="--self-check") {Console.WriteLine("Offline Fort adapter. --self-check uses memory only; no driver or service access.");return 2;}
             try {
-                ProtocolCases();StateCases();RecoveryCases();BrowserRetirementCases();ModelCases();RetiredModelTestCases();EnhancementCases();ProxySettingsCases();ProbeTimingCases();Ipv4SourceCases();LocalServiceCases();
+                ProtocolCases();StateCases();RecoveryCases();MutexCases();BrowserRetirementCases();ModelCases();RetiredModelTestCases();EnhancementCases();ProxySettingsCases();ProbeTimingCases();Ipv4SourceCases();LocalServiceCases();
                 Check(StartupPolicy.MissingTask(new FileNotFoundException()),"missing task mapped to a .NET file exception remains a missing-task result");
                 Check(StartupPolicy.MissingTask(new COMException("missing",unchecked((int)0x80070002))),"raw COM missing-task HRESULT remains supported");
                 Check(!StartupPolicy.MissingTask(new UnauthorizedAccessException()),"scheduler access denial stays a visible failure");

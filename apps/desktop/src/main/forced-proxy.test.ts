@@ -2,9 +2,23 @@ import { describe, expect, it, vi } from "vite-plus/test";
 
 vi.mock("electron", () => ({ app: {} }));
 import { coreConfiguration } from "./egress-config.ts";
-import { automaticNode } from "./forced-proxy.ts";
+import { automaticNode, proxyDiscoveryIssue } from "./forced-proxy.ts";
 
 describe("automatic per-program force-proxy route", () => {
+  it("distinguishes a starting core and a slow lookup from an invalid configuration", () => {
+    expect(
+      proxyDiscoveryIssue({ stderr: "IPGUARD_DISCOVERY: Proxy listener is unavailable\r\n" }),
+    ).toBe("本机代理端口尚未监听，等待代理核心启动");
+    expect(proxyDiscoveryIssue({ killed: true })).toBe("代理核心查询超时，请稍后重试");
+    expect(
+      proxyDiscoveryIssue({ stderr: "IPGUARD_DISCOVERY: Proxy listener process exited" }),
+    ).toBe("代理核心已退出，请稍后重试");
+    expect(
+      proxyDiscoveryIssue({
+        stderr: "IPGUARD_DISCOVERY: One explicit configuration file is required",
+      }),
+    ).toBe("Xray / sing-box 启动参数缺少唯一配置文件");
+  });
   it("discards mainland direct rules and binds the dedicated inbound to the selected proxy", () => {
     const node = automaticNode(
       {
