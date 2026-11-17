@@ -21,12 +21,14 @@ namespace IpGuard.ProcessNetwork {
                 if(key==null) throw new InvalidOperationException("驱动所有权记录缺失。");return key;
             }
         }
-        internal static bool CanResumeAfterReboot(string previousBoot,Guid currentBoot) {
-            Guid previous;
-            return currentBoot!=Guid.Empty && Guid.TryParseExact(previousBoot,"D",out previous) && previous!=Guid.Empty && previous!=currentBoot;
+        internal static bool CanResumeAfterReboot(long runtimeStart,long bootTime) {
+            return runtimeStart>0 && bootTime>0 && runtimeStart<bootTime;
         }
-        internal static bool IsPreviousBoot(Guid currentBoot) {
-            using(RegistryKey key=Open(false)) return CanResumeAfterReboot(key.GetValue("RuntimeBoot") as string,currentBoot);
+        internal static bool IsPreviousBoot(long bootTime) {
+            using(RegistryKey key=Open(false)) {
+                object started=key.GetValue("RuntimeStart");
+                return started is long && CanResumeAfterReboot((long)started,bootTime);
+            }
         }
         public KernelRuntime(OwnedDriverRegistration registration) {
             this.registration=registration;
@@ -40,6 +42,7 @@ namespace IpGuard.ProcessNetwork {
                 using(Process current=Process.GetCurrentProcess()) {
                     key.SetValue("RuntimeActive",0);key.SetValue("RuntimePid",current.Id);
                     key.SetValue("RuntimeStart",current.StartTime.ToFileTimeUtc(),RegistryValueKind.QWord);
+                    // The independently installed recovery executable still reads RuntimeBoot; re-arm uses RuntimeStart.
                     key.SetValue("RuntimeExe",SystemPolicy.Exe);key.SetValue("RuntimeBoot",BootIdentity.Read().ToString("D"));
                     key.SetValue("RuntimeToken",token);key.SetValue("RuntimeHeartbeat",DateTime.UtcNow.Ticks,RegistryValueKind.QWord);
                     key.SetValue("RuntimeActive",1);key.Flush();

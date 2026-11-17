@@ -9,13 +9,17 @@ on:
         description: Verify Fort live local-port updates on an isolated runner
         type: boolean
         default: false
+      kernel_boot_review:
+        description: Verify previous-boot driver re-arm on an isolated runner
+        type: boolean
+        default: false
 
 permissions:
   contents: read
 
 jobs:
   windows:
-    if: ${{ !inputs.kernel_hot_review }}
+    if: ${{ !inputs.kernel_hot_review && !inputs.kernel_boot_review }}
     runs-on: windows-latest
     timeout-minutes: 20
     steps:
@@ -58,7 +62,7 @@ jobs:
           if-no-files-found: warn
 
   kernel-hot-review:
-    if: ${{ inputs.kernel_hot_review }}
+    if: ${{ inputs.kernel_hot_review || inputs.kernel_boot_review }}
     runs-on: windows-latest
     timeout-minutes: 20
     steps:
@@ -90,14 +94,21 @@ jobs:
           Copy-Item "apps/desktop/dist/native/$version/IpGuard.Recovery.exe" $native
           Copy-Item apps/desktop/dist/drivers/fort/fortfw.sys $driver
           "IPGUARD_REVIEW_NATIVE=$native" >> $env:GITHUB_ENV
-      - name: Verify live rule replacement and protected PID
+      - name: Verify isolated kernel behavior
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
           $review = Join-Path $env:IPGUARD_REVIEW_NATIVE 'IpGuard.Native.exe'
           & $review --install-only
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          & $review --hot-review
+          if ('${{ inputs.kernel_boot_review }}' -eq 'true') {
+            $marker = 'HKLM:\SOFTWARE\IPGuard\ProcessNetwork'
+            $boot = (Get-CimInstance Win32_OperatingSystem).LastBootUpTime.ToUniversalTime().ToFileTimeUtc()
+            New-ItemProperty -Path $marker -Name RuntimeStart -Value ([long]($boot - [TimeSpan]::FromMinutes(5).Ticks)) -PropertyType QWord -Force | Out-Null
+            New-ItemProperty -Path $marker -Name RuntimeActive -Value 0 -PropertyType DWord -Force | Out-Null
+            Set-Service -Name fortfw -StartupType Disabled
+            & $review --boot-review
+          } else { & $review --hot-review }
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Recover and inspect isolated driver state
         if: always()
