@@ -1,6 +1,6 @@
 {
   "name": "ip-guard",
-  "version": "0.15.1",
+  "version": "0.15.2",
   "private": true,
   "license": "GPL-3.0-only",
   "type": "module",
