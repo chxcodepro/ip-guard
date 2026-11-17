@@ -61,4 +61,21 @@ namespace IpGuard.ProcessNetwork {
             } finally {Marshal.FreeHGlobal(buffer);}
         }
     }
+    internal static class BootTime {
+        // BootIdentifier can persist across restarts; LastBootUpTime identifies the current boot session.
+        public static long Read() {
+            using(var query=new ManagementObjectSearcher(@"root\cimv2","SELECT LastBootUpTime FROM Win32_OperatingSystem"))
+            using(var results=query.Get()) {
+                long boot=0;
+                foreach(ManagementObject item in results) using(item) {
+                    if(boot!=0) throw new InvalidDataException("Windows 启动时间重复。");
+                    string value=item["LastBootUpTime"] as string;
+                    if(String.IsNullOrEmpty(value)) throw new InvalidDataException("Windows 启动时间缺失。");
+                    boot=ManagementDateTimeConverter.ToDateTime(value).ToUniversalTime().ToFileTimeUtc();
+                }
+                if(boot<=0 || boot>DateTime.UtcNow.ToFileTimeUtc()) throw new InvalidDataException("Windows 启动时间无效。");
+                return boot;
+            }
+        }
+    }
 }

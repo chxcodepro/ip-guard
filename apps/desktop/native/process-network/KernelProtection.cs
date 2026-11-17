@@ -43,6 +43,7 @@ namespace IpGuard.ProcessNetwork {
             starting=true;
             try {
                 setGate(false);
+                long bootTime=BootTime.Read();
                 var waiting=Stopwatch.StartNew();
                 while(true) {
                     using(Mutex operation=OwnedDriverRegistration.OperationMutex()) {
@@ -50,10 +51,9 @@ namespace IpGuard.ProcessNetwork {
                         if(!held) throw new TimeoutException("命令防护恢复尚未完成，请稍后重试。");
                         try {
                             var record=OwnedDriverRegistration.Read();
-                            Guid boot=BootIdentity.Read();
-                            bool reboot=record!=null && KernelRuntime.IsPreviousBoot(boot);
+                            bool reboot=record!=null && KernelRuntime.IsPreviousBoot(bootTime);
                             // A recovery process releases this mutex while stopping the service; wait for its completion marker.
-                            if(!reboot || !record.RecoveryPending || record.RecoveryBootId!=boot) {
+                            if(!reboot || !record.RecoveryPending || record.RecoveryBootId!=BootIdentity.Read()) {
                                 StartCore(egress,targets,recover || reboot);return;
                             }
                         } finally {operation.ReleaseMutex();}

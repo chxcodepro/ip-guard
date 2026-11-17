@@ -133,12 +133,11 @@ namespace IpGuard.ProcessNetwork {
                 }
             } finally {Marshal.FreeHGlobal(provider);}
             Check(OwnedDriverRegistration.ServicePath(@"\??\C:\ProgramData\IPGuard\CommandProtection\driver\fortfw.sys")==@"C:\ProgramData\IPGuard\CommandProtection\driver\fortfw.sys","NT driver path normalizes without executable quoting");
-            Guid bootId=new Guid("bbfc69b3-de1a-4c8e-bbd0-e3b5577340ce");
-            Check(KernelRuntime.CanResumeAfterReboot("d3bc346b-87c0-4255-909b-3e648b563be3",bootId),"saved enabled protection can resume after a new Windows boot");
-            Check(!KernelRuntime.CanResumeAfterReboot(bootId.ToString("D"),bootId),"same-boot driver failures still require explicit recovery");
-            foreach(string invalid in new[] {null,"","invalid",Guid.Empty.ToString("D")})
-                Check(!KernelRuntime.CanResumeAfterReboot(invalid,bootId),"unknown previous boot never clears the recovery latch");
-            Check(!KernelRuntime.CanResumeAfterReboot("d3bc346b-87c0-4255-909b-3e648b563be3",Guid.Empty),"unknown current boot never clears the recovery latch");
+            long bootTime=new DateTime(2026,11,16,16,16,54,DateTimeKind.Utc).ToFileTimeUtc();
+            long priorRuntime=new DateTime(2026,11,14,19,17,58,DateTimeKind.Utc).ToFileTimeUtc();
+            Check(KernelRuntime.CanResumeAfterReboot(priorRuntime,bootTime),"prior runtime resumes after a new Windows boot even when boot-environment GUID is unchanged");
+            Check(!KernelRuntime.CanResumeAfterReboot(bootTime+TimeSpan.FromSeconds(20).Ticks,bootTime),"same-boot driver failures still require explicit recovery");
+            Check(!KernelRuntime.CanResumeAfterReboot(0,bootTime) && !KernelRuntime.CanResumeAfterReboot(-1,bootTime) && !KernelRuntime.CanResumeAfterReboot(priorRuntime,0),"missing or invalid start times never clear the recovery latch");
         }
         static void BrowserRetirementCases() {
             foreach(string image in new[] {"chrome.exe","msedge.exe","CHROME.EXE","firefox.exe","brave.exe"})

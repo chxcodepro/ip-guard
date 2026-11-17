@@ -122,7 +122,7 @@ public static class KernelReview {
         public void Dispose() {if(pipe!=null) {try {if(thread.IsAlive) Send("exit");}catch(IOException) {}pipe.Dispose();}if(!thread.Join(5000)) throw new Exception("debug worker did not exit");}
     }
     public static int Main(string[] args) {
-        if(args.Length!=1 || (args[0]!="--install-only" && args[0]!="--verify" && args[0]!="--hot-review")) return 2;
+        if(args.Length!=1 || (args[0]!="--install-only" && args[0]!="--verify" && args[0]!="--hot-review" && args[0]!="--boot-review")) return 2;
         KernelProtection protection=null;bool installed=false;
         try {
             if(args[0]=="--install-only") {OwnedDriverRegistration.Install();Console.WriteLine("INSTALL_ONLY: driver stopped; independent recovery task prepared");return 0;}
@@ -143,7 +143,11 @@ public static class KernelReview {
             protection=new KernelProtection(allowed=>proxyAllowed=allowed);
             var egress=new EgressPolicy {id=Guid.NewGuid().ToString("D"),label="isolated review",port=proxyPort};
             if(args[0]=="--hot-review") SystemPolicy.LoopbackDirect=true;
-            protection.Start(egress,new[] {new Target {id=Guid.NewGuid().ToString("D"),name="isolated fixture",path=root,enabled=true}},true);protection.Allow(true);
+            protection.Start(egress,new[] {new Target {id=Guid.NewGuid().ToString("D"),name="isolated fixture",path=root,enabled=true}},args[0]!="--boot-review");protection.Allow(true);
+            if(args[0]=="--boot-review") {
+                var record=OwnedDriverRegistration.Read();record.RequireStartable();
+                Check(record.Validate(true)==4,"previous-boot recovery resumes the existing disabled driver on demand");
+            }
             using(var session=new Session(protection,root)) {
                 if(args[0]=="--hot-review") {
                     Check(session.Send("direct")=="OK" && session.Send("ipv6")=="OK" && ProbeInbound(inboundPort)=="OK","initial loopback default permits running local services");
