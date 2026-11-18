@@ -12,11 +12,22 @@ import type { Guardian } from "#src/main/guardian.ts";
 import { detectProtectionEvent } from "#src/main/protection-event.ts";
 import type { ProtectionNotice } from "#src/main/protection-event.ts";
 
+function isIpPause(notice: ProtectionNotice) {
+  return notice.kind === "ip_changed" || notice.kind === "ip_unavailable";
+}
+
+function sessionEnded(notice: ProtectionNotice, snapshot: Snapshot) {
+  return (
+    (isIpPause(notice) || notice.kind === "network_restored") &&
+    !notice.apps.some(({ id }) => snapshot.running.includes(id))
+  );
+}
+
 export class ProtectionAlerts {
   private previous: Snapshot | undefined;
   private viewer: { child: ChildProcess; notice: ProtectionNotice } | undefined;
   private stopped = false;
-  private fallbackOpen = false;
+  private fallbackOpen: { notice: ProtectionNotice; controller: AbortController } | undefined;
   private fallbackFor: ProtectionNotice | undefined;
   private openMain: () => void;
   constructor(guardian: Guardian, openMain: () => void) {
@@ -25,6 +36,9 @@ export class ProtectionAlerts {
       const previous = this.previous;
       this.previous = current;
       if (this.stopped) return;
+      if (this.viewer && sessionEnded(this.viewer.notice, current)) this.closeViewer();
+      if (this.fallbackOpen && sessionEnded(this.fallbackOpen.notice, current))
+        this.fallbackOpen.controller.abort();
       const notice = detectProtectionEvent(previous, current, guardian.isStopping);
       if (notice) this.show(notice);
       else {
@@ -32,7 +46,7 @@ export class ProtectionAlerts {
         if (
           viewer &&
           viewer.notice.probe.round === 0 &&
-          ["ip_changed", "ip_unavailable"].includes(viewer.notice.kind) &&
+          isIpPause(viewer.notice) &&
           current.online &&
           current.ready &&
           !current.enhancementReady &&
@@ -48,7 +62,7 @@ export class ProtectionAlerts {
           !viewer ||
           viewer.child.exitCode !== null ||
           !viewer.child.stdin?.writable ||
-          !["ip_changed", "ip_unavailable"].includes(viewer.notice.kind) ||
+          !isIpPause(viewer.notice) ||
           !current.online ||
           !current.rulesLocked ||
           current.ready ||
@@ -84,7 +98,7 @@ export class ProtectionAlerts {
       const owned = viewer;
       if (child.stdout)
         createInterface({ input: child.stdout }).on("line", (line) => {
-          if (!this.stopped && line === "open") this.openMain();
+          if (this.viewer === owned && line === "open") this.openMain();
         });
       child.stderr?.setEncoding("utf8");
       child.stderr?.on("data", (message: string) =>
@@ -109,14 +123,32 @@ export class ProtectionAlerts {
   private writeNotice(updateOnly: boolean) {
     const viewer = this.viewer;
     if (!viewer) return;
-    viewer.child.stdin?.write(`${JSON.stringify({ ...viewer.notice, updateOnly })}\n`, (error) => {
+    const notice = {
+      ...viewer.notice,
+      apps: [...new Set(viewer.notice.apps.map(({ name }) => name))],
+      updateOnly,
+    };
+    viewer.child.stdin?.write(`${JSON.stringify(notice)}\n`, (error) => {
       if (error && !updateOnly && this.viewer === viewer) void this.fallback(viewer.notice);
     });
   }
+  private closeViewer() {
+    const viewer = this.viewer;
+    this.viewer = undefined;
+    viewer?.child.stdin?.end();
+  }
   private async fallback(notice: ProtectionNotice) {
-    if (this.stopped || this.fallbackOpen || this.fallbackFor === notice) return;
+    if (
+      this.stopped ||
+      this.fallbackOpen ||
+      this.fallbackFor === notice ||
+      (this.previous && sessionEnded(notice, this.previous))
+    )
+      return;
+    const controller = new AbortController();
+    const names = [...new Set(notice.apps.map(({ name }) => name))].join("、");
     this.fallbackFor = notice;
-    this.fallbackOpen = true;
+    this.fallbackOpen = { notice, controller };
     try {
       const result = await dialog.showMessageBox({
         type: notice.kind === "network_restored" ? "info" : "warning",
@@ -128,19 +160,21 @@ export class ProtectionAlerts {
               ? "受保护程序已停止"
               : "已暂停联网，程序保持运行",
         detail: notice.detail
-          ? `${notice.apps.join("、")}\n${notice.detail}`
-          : `${notice.apps.join("、")}\n${notice.probe.round ? `第 ${notice.probe.round} 轮 · ${notice.probe.attempt}/${ipv4Attempts} 次\n` : ""}${notice.kind === "network_restored" ? "IPv4 已命中允许列表。未完成的请求请重新发送。" : ["guard_offline", "enforcement_failed"].includes(notice.kind) ? "请先恢复 IP Guard 防护，再手动重新启动程序。" : "恢复允许的网络后自动恢复联网。"}`,
+          ? `${names}\n${notice.detail}`
+          : `${names}\n${notice.probe.round ? `第 ${notice.probe.round} 轮 · ${notice.probe.attempt}/${ipv4Attempts} 次\n` : ""}${notice.kind === "network_restored" ? "IPv4 已命中允许列表。未完成的请求请重新发送。" : ["guard_offline", "enforcement_failed"].includes(notice.kind) ? "请先恢复 IP Guard 防护，再手动重新启动程序。" : "恢复允许的网络后自动恢复联网。"}`,
+        signal: controller.signal,
         buttons: ["知道了", "打开 IP Guard"],
         defaultId: 0,
         cancelId: 0,
       });
-      if (result.response === 1) this.openMain();
+      if (!controller.signal.aborted && result.response === 1) this.openMain();
     } finally {
-      this.fallbackOpen = false;
+      this.fallbackOpen = undefined;
     }
   }
   stop() {
     this.stopped = true;
-    this.viewer?.child.stdin?.end();
+    this.closeViewer();
+    this.fallbackOpen?.controller.abort();
   }
 }

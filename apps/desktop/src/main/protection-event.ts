@@ -8,7 +8,7 @@ export type ProtectionNotice = {
     | "guard_offline"
     | "enforcement_failed";
   detail?: string;
-  apps: string[];
+  apps: { id: string; name: string }[];
   currentIp: string;
   expectedIps: string[];
   probe: Snapshot["probe"];
@@ -28,7 +28,7 @@ export function detectProtectionEvent(
       ["blocked", "failed"].includes(previous.enhancementPhase);
     const apps = current.apps
       .filter((app) => app.enhanced && current.running.includes(app.id))
-      .map((app) => app.name);
+      .map(({ id, name }) => ({ id, name }));
     if (apps.length && (failed || resumed))
       return {
         kind: resumed
@@ -54,7 +54,7 @@ export function detectProtectionEvent(
       return {
         kind: "enforcement_failed",
         detail: current.commandBlockReason,
-        apps: [app.name],
+        apps: [{ id: app.id, name: app.name }],
         currentIp: current.currentIp,
         expectedIps: current.settings.expectedIps,
         probe: current.probe,
@@ -74,7 +74,7 @@ export function detectProtectionEvent(
   if (stopped && current.running.length) return;
   const apps = (stopped ? previous : current).apps
     .filter((app) => (stopped ? previous : current).running.includes(app.id))
-    .map((app) => app.name);
+    .map(({ id, name }) => ({ id, name }));
   if (!apps.length) return;
   return {
     kind: !current.online
@@ -86,7 +86,7 @@ export function detectProtectionEvent(
           : current.networkIssue === "ip_changed"
             ? "ip_changed"
             : "ip_unavailable",
-    apps: [...new Set(apps)],
+    apps,
     currentIp: current.online ? current.currentIp : "",
     expectedIps: current.settings.expectedIps,
     probe: current.probe,

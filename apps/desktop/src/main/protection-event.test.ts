@@ -1,4 +1,8 @@
-import { describe, expect, it } from "vite-plus/test";
+import { ChildProcess, spawn } from "node:child_process";
+import { PassThrough } from "node:stream";
+
+import type { MessageBoxOptions, MessageBoxReturnValue } from "electron";
+import { describe, expect, it, vi } from "vite-plus/test";
 
 import {
   nativeVersion,
@@ -8,7 +12,20 @@ import {
 } from "@ip-guard/electron";
 import type { Snapshot } from "@ip-guard/electron";
 
+import { ClaudeIPv4 } from "./claude-ip.ts";
+import { Guardian } from "./guardian.ts";
+import { ProtectionAlerts } from "./protection-alerts.ts";
 import { detectProtectionEvent } from "./protection-event.ts";
+
+// The external window processes are replaced; snapshots and notice dispatch use the real code.
+vi.mock("node:child_process", async (original) => ({
+  ...(await original<typeof import("node:child_process")>()),
+  spawn: vi.fn(),
+}));
+const showMessageBox = vi.hoisted(() =>
+  vi.fn<(_options: MessageBoxOptions) => Promise<MessageBoxReturnValue>>(),
+);
+vi.mock("electron", () => ({ app: { isPackaged: false }, dialog: { showMessageBox } }));
 
 const running: Snapshot = {
   networkPolicy: {
@@ -77,7 +94,7 @@ describe("network-only protection notices", () => {
     };
     expect(detectProtectionEvent(enhanced, blocked, false)).toMatchObject({
       kind: "ip_changed",
-      apps: ["Claude"],
+      apps: [{ id: running.running[0], name: "Claude" }],
       detail: "国内查询出口未命中允许列表",
     });
     expect(blocked.ready).toBe(true);
@@ -96,7 +113,7 @@ describe("network-only protection notices", () => {
     };
     expect(detectProtectionEvent(running, blocked, false)).toMatchObject({
       kind: "enforcement_failed",
-      apps: ["Claude"],
+      apps: [{ id: running.running[0], name: "Claude" }],
       detail: "子进程缺少可核验元数据",
     });
     expect(detectProtectionEvent(blocked, { ...blocked }, false)).toBeUndefined();
@@ -107,6 +124,64 @@ describe("network-only protection notices", () => {
     networkIssue: "ip_changed",
     currentIp: "1.1.1.1",
   };
+  it("closes the IP mismatch window when the affected Claude session exits", () => {
+    const child = Object.assign(new ChildProcess(), { stdin: new PassThrough() });
+    vi.mocked(spawn).mockReturnValueOnce(child);
+    const guardian = new Guardian(new ClaudeIPv4());
+    const alerts = new ProtectionAlerts(guardian, () => {});
+    const idle: Snapshot = { ...running, running: [] };
+    const blockedIdle: Snapshot = { ...paused, running: [] };
+    try {
+      guardian.emit("snapshot", idle);
+      guardian.emit("snapshot", blockedIdle);
+      expect(spawn).not.toHaveBeenCalled();
+      guardian.emit("snapshot", running);
+      guardian.emit("snapshot", paused);
+      expect(spawn).toHaveBeenCalledTimes(1);
+      const [claude] = running.apps;
+      if (!claude) throw new Error("Missing Claude fixture");
+      const other = { ...claude, id: "65fcc04c-f638-48a2-8daf-5e5129baecb6" };
+      guardian.emit("snapshot", {
+        ...blockedIdle,
+        apps: [...paused.apps, other],
+        running: [other.id],
+      });
+      expect(child.stdin.writableEnded).toBe(true);
+      child.emit("exit", 1);
+      expect(showMessageBox).not.toHaveBeenCalled();
+      guardian.emit("snapshot", idle);
+      guardian.emit("snapshot", blockedIdle);
+      expect(spawn).toHaveBeenCalledTimes(1);
+    } finally {
+      alerts.stop();
+      vi.clearAllMocks();
+    }
+  });
+  it("dismisses a fallback IP warning once Claude exits", async () => {
+    const child = Object.assign(new ChildProcess(), { stdin: new PassThrough() });
+    vi.mocked(spawn).mockReturnValueOnce(child);
+    const fallback = Promise.withResolvers<MessageBoxReturnValue>();
+    showMessageBox.mockReturnValueOnce(fallback.promise);
+    const guardian = new Guardian(new ClaudeIPv4());
+    const openMain = vi.fn();
+    const alerts = new ProtectionAlerts(guardian, openMain);
+    try {
+      guardian.emit("snapshot", running);
+      guardian.emit("snapshot", paused);
+      child.emit("exit", 1);
+      expect(showMessageBox).toHaveBeenCalledTimes(1);
+      const signal = showMessageBox.mock.calls[0]?.[0].signal;
+      expect(signal?.aborted).toBe(false);
+      guardian.emit("snapshot", { ...paused, running: [] });
+      expect(signal?.aborted).toBe(true);
+      fallback.resolve({ response: 1, checkboxChecked: false });
+      await fallback.promise;
+      expect(openMain).not.toHaveBeenCalled();
+    } finally {
+      alerts.stop();
+      vi.clearAllMocks();
+    }
+  });
   it("reports a blocked connection while the same process remains running", () => {
     expect(detectProtectionEvent(running, paused, false)?.kind).toBe("ip_changed");
     expect(detectProtectionEvent(paused, { ...paused, checking: true }, false)).toBeUndefined();
