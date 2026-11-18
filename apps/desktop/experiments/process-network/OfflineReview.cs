@@ -163,6 +163,14 @@ namespace IpGuard.ProcessNetwork {
             Check(config.apps.Count==0 && !config.commandProtection,"removing the last enhanced browser never starts a driver");
         }
         static void ModelCases() {
+            var sdkOptions=ClaudeCodeScope.Options(new[] {
+                "claude.exe","--output-format","stream-json","--input-format","stream-json",
+                "--include-partial-messages","--thinking-display=summarized",
+                "--resume","00000000-0000-4000-8000-000000000001",
+                "--allowedTools","Read","--mcp-config","{\"mcpServers\":{}}","--model","claude-sonnet"
+            });
+            Check(sdkOptions.Count==1 && sdkOptions["--model"]=="claude-sonnet","SDK streaming and session options preserve model detection");
+            Throws<InvalidDataException>(()=>ClaudeCodeScope.Options(new[] {"claude.exe","--resume","--model","claude-sonnet"}),"bare resume does not consume a model flag");
             Check(ClaudeCodeScope.Options(new[] {"claude.exe","--","--model","deepseek-chat"}).Count==0,"model-like prompt text after end-of-options is not a model override");
             Check(!ClaudeCodeScope.Options(new[] {"claude.exe","--system-prompt","--model","deepseek-chat"}).ContainsKey("--model"),"a model-like system prompt value is not mistaken for a model flag");
             Check(ClaudeCodeScope.Options(new[] {"claude.exe","--system-prompt","--model","--model=claude-sonnet"})["--model"]=="claude-sonnet","real model flag follows unrelated option values");
