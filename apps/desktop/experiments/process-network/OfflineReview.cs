@@ -214,10 +214,18 @@ namespace IpGuard.ProcessNetwork {
                 Check(peer.WaitOne(0),"legacy SYSTEM-style mutex opens with required rights");peer.ReleaseMutex();
             }
         }
+        static void HvciCases() {
+            FortEnvironment.RequireEditableHvci(0,0,0,1);
+            FortEnvironment.RequireEditableHvci(0,0,0,0);
+            Throws<InvalidOperationException>(()=>FortEnvironment.RequireEditableHvci(1,0,0,1),"managed HVCI policy stays unchanged");
+            Throws<InvalidOperationException>(()=>FortEnvironment.RequireEditableHvci(0,1,0,1),"VBS firmware lock stays unchanged");
+            Throws<InvalidOperationException>(()=>FortEnvironment.RequireEditableHvci(0,0,1,1),"HVCI firmware lock stays unchanged");
+            Throws<InvalidDataException>(()=>FortEnvironment.RequireEditableHvci(0,0,0,2),"unknown HVCI switch value stays unchanged");
+        }
         public static int Main(string[] args) {
             if(args.Length!=1 || args[0]!="--self-check") {Console.WriteLine("Offline Fort adapter. --self-check uses memory only; no driver or service access.");return 2;}
             try {
-                ProtocolCases();StateCases();RecoveryCases();MutexCases();BrowserRetirementCases();ModelCases();RetiredModelTestCases();EnhancementCases();ProxySettingsCases();ProbeTimingCases();Ipv4SourceCases();LocalServiceCases();
+                ProtocolCases();StateCases();RecoveryCases();MutexCases();HvciCases();BrowserRetirementCases();ModelCases();RetiredModelTestCases();EnhancementCases();ProxySettingsCases();ProbeTimingCases();Ipv4SourceCases();LocalServiceCases();
                 Check(StartupPolicy.MissingTask(new FileNotFoundException()),"missing task mapped to a .NET file exception remains a missing-task result");
                 Check(StartupPolicy.MissingTask(new COMException("missing",unchecked((int)0x80070002))),"raw COM missing-task HRESULT remains supported");
                 Check(!StartupPolicy.MissingTask(new UnauthorizedAccessException()),"scheduler access denial stays a visible failure");

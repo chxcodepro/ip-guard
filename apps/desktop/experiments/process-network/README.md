@@ -27,7 +27,7 @@ node apps/desktop/scripts/build-process-network.ts
 
 ## 加载前置条件
 
-- HVCI 运行、已配置、待启用或状态读取失败时保持关闭，系统安全设置保持原样。
+- HVCI 运行、已配置、待启用或状态读取失败时拒绝安装与加载驱动。用户点击「安装驱动」并明确确认后，IP Guard 只把本机 HVCI 开关设为关闭；组织策略或 UEFI 锁定时拒绝修改。重启后重新核对 HVCI 状态，确认关闭才可继续安装。Secure Boot 和其他 VBS 功能保持原样；卸载后如需恢复内存完整性，应在 Windows 安全中心重新开启。
 - 提供者数据的 `boot_filter=1` / `filter_locals=1`，以及四个启动项、四个持久 ALE BLOCK 均须核实。`FortProvider.ReadProtection` 仅读取证明。
 - 自有注册使用受管理员 / SYSTEM 保护的 64 位 `HKLM\SOFTWARE\IPGuard\ProcessNetwork`，格式为 `Format=2`，绑定 `OwnerSid` 与完整 `DriverPath`。
 - 服务为 `fortfw`，按需启动，驱动路径使用未加引号的 NT 路径。已有其他 Fort 安装时保留其服务和规则。

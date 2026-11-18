@@ -13,6 +13,10 @@ on:
         description: Verify previous-boot driver re-arm on an isolated runner
         type: boolean
         default: false
+      hvci_review:
+        description: Verify the opt-in local HVCI switch on an isolated runner
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -38,6 +42,15 @@ jobs:
         run: pnpm exec vp test --project unit apps/desktop/src/main/mihomo-config.test.ts apps/desktop/src/main/forced-proxy.test.ts apps/desktop/src/main/http-proxy.test.ts packages/electron/src/network-policy.test.ts
       - name: Build the native proxy host without installing a driver
         run: node apps/desktop/scripts/build-native.ts
+      - name: Review the local HVCI switch without loading a driver
+        if: ${{ inputs.hvci_review }}
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          node apps/desktop/scripts/build-kernel-review.ts
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & artifacts/kernel-integration-review/IpGuard.HvciReview.exe --ci
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Verify real private Mihomo forwarding and shutdown
         shell: pwsh
         run: |

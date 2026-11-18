@@ -256,7 +256,11 @@ export const setupIpc = (
         await proxyEnhancement.refresh();
         if (proxyEnhancement.state.phase !== "ready") throw new Error(proxyEnhancement.state.error);
         if (!snapshot.driver.supported)
-          throw new Error("此设备的命令过滤器尚未就绪，请在防护设置安装并查看实验风险");
+          throw new Error(
+            snapshot.driver.hvci
+              ? "请先在命令过滤器中关闭内存完整性，重启后再开启增强"
+              : snapshot.driver.error || "此设备的命令过滤器尚未就绪",
+          );
       }
       const answer = await dialog.showMessageBox({
         type: "warning",
@@ -300,6 +304,32 @@ export const setupIpc = (
         if (!snapshot.admin) throw new Error("请以管理员身份重启 IP Guard");
         const installing = command.action === "kernel:install";
         const rescuing = command.action === "kernel:rescue";
+        if (snapshot.driver.hvci && !rescuing) {
+          const answer = await dialog.showMessageBox({
+            type: "warning",
+            title: "关闭 Windows 内存完整性",
+            message: "关闭内存完整性并在重启后继续？",
+            detail:
+              "这会降低 Windows 内核防护，卸载 IP Guard 后也会保持关闭。仅修改本机 HVCI 开关；组织策略、UEFI 锁与 Secure Boot 保持原样。当前不会安装或加载驱动。",
+            buttons: ["保持开启", "确认关闭"],
+            defaultId: 0,
+            cancelId: 0,
+          });
+          if (answer.response !== 1) return { cancelled: true, snapshot };
+          const next = await guardian.request("kernel:hvci:disable");
+          await dialog.showMessageBox({
+            type: "info",
+            title: "等待重启",
+            message: "关闭请求已保存",
+            detail: installing
+              ? "保存工作并重启 Windows，之后回到命令过滤器安装驱动。"
+              : "保存工作并重启 Windows；IP Guard 启动后会重新检查过滤器。",
+            buttons: ["知道了"],
+          });
+          return { snapshot: next };
+        }
+        if (!snapshot.driver.supported && !rescuing)
+          throw new Error(snapshot.driver.error || "此设备的命令过滤器尚未就绪");
         const answer = await dialog.showMessageBox({
           type: "warning",
           title: installing ? "安装命令防护驱动" : "命令进程树防护",
