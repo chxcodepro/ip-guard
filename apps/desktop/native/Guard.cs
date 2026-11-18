@@ -346,6 +346,8 @@ namespace IpGuard {
                     enhancementReady=false;enhancementPhase="failed";enhancementReason=message;TripEnhanced(message);
                 } else if(action=="kernel:install") {
                     commandGuard.Install();Log("info","命令进程树驱动已安装，尚未加载");
+                } else if(action=="kernel:hvci:disable") {
+                    commandGuard.RequestDisableMemoryIntegrity();Log("warning","已按用户确认关闭本机内存完整性设置；等待重启后复核，驱动未加载");
                 } else if(action=="kernel:repair") {
                     TripEnhanced("命令防护正在恢复，增强会话已停止");
                     StopCommandGuard();LoadCommandGuard(true);Log("info","命令进程树防护已恢复");Check();

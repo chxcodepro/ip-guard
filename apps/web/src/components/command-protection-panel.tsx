@@ -54,11 +54,22 @@ export function CommandProtectionPanel({
             <button
               type="button"
               className="btn primary"
-              disabled={!available || !driver.supported || waiting}
+              disabled={
+                !available ||
+                (!driver.supported && !driver.hvci) ||
+                waiting ||
+                driver.rebootRequired
+              }
               onClick={() => void onAction({ action: "kernel:install" })}
             >
-              {waiting ? <LoaderCircle size={14} className="spin" /> : <Download size={14} />}
-              安装驱动
+              {waiting ? (
+                <LoaderCircle size={14} className="spin" />
+              ) : driver.hvci ? (
+                <Power size={14} />
+              ) : (
+                <Download size={14} />
+              )}
+              {driver.rebootRequired ? "等待重启" : driver.hvci ? "关闭内存完整性" : "安装驱动"}
             </button>
           ) : (
             <>
@@ -77,11 +88,11 @@ export function CommandProtectionPanel({
                 <button
                   type="button"
                   className="btn primary"
-                  disabled={!available || waiting}
+                  disabled={!available || waiting || driver.rebootRequired}
                   onClick={() => void onAction({ action: "kernel:repair" })}
                 >
                   {waiting ? <LoaderCircle size={14} className="spin" /> : <Power size={14} />}
-                  修复过滤器
+                  {driver.rebootRequired ? "等待重启" : "修复过滤器"}
                 </button>
               )}
             </>

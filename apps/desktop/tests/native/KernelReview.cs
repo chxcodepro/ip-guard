@@ -8,6 +8,7 @@ using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.Win32;
 using IpGuard;
 using IpGuard.ProcessNetwork;
 
@@ -195,5 +196,36 @@ public static class KernelReview {
             try {if(protection!=null) protection.Stop();if(installed) {var record=OwnedDriverRegistration.Read();if(record!=null) record.Uninstall();}}
             catch(Exception error) {Console.Error.WriteLine("AUTOMATIC RECOVERY REMAINS ARMED: "+error.Message);}
         }
+    }
+}
+
+public static class HvciReview {
+    public static int Main(string[] args) {
+        if(args.Length!=1 || args[0]!="--ci" || Environment.GetEnvironmentVariable("GITHUB_ACTIONS")!="true" || Environment.GetEnvironmentVariable("RUNNER_ENVIRONMENT")!="github-hosted") return 2;
+        try {
+            SystemPolicy.RequireAdmin();
+            const string path=@"SYSTEM\CurrentControlSet\Control\DeviceGuard\Scenarios\HypervisorEnforcedCodeIntegrity";
+            using(RegistryKey machine=RegistryKey.OpenBaseKey(RegistryHive.LocalMachine,RegistryView.Registry64)) {
+                object previous=null;RegistryValueKind kind=RegistryValueKind.DWord;
+                using(RegistryKey existing=machine.OpenSubKey(path)) if(existing!=null) {
+                    previous=existing.GetValue("Enabled");
+                    if(previous!=null) kind=existing.GetValueKind("Enabled");
+                }
+                try {
+                    using(RegistryKey setting=machine.CreateSubKey(path)) {setting.SetValue("Enabled",1,RegistryValueKind.DWord);setting.Flush();}
+                    FortEnvironment.RequestDisableMemoryIntegrity();
+                    using(RegistryKey setting=machine.OpenSubKey(path)) if(!(setting.GetValue("Enabled") is int) || (int)setting.GetValue("Enabled")!=0) throw new Exception("HVCI local switch was not set to off");
+                    if(OwnedDriverRegistration.Read()!=null) throw new Exception("HVCI switch review unexpectedly installed a driver");
+                    Console.WriteLine("PASS HVCI local switch changed; driver was not installed or loaded");
+                } finally {
+                    using(RegistryKey setting=machine.OpenSubKey(path,true)) if(setting!=null) {
+                        if(previous==null) setting.DeleteValue("Enabled",false);
+                        else setting.SetValue("Enabled",previous,kind);
+                        setting.Flush();
+                    }
+                }
+            }
+            return 0;
+        } catch(Exception error) {Console.Error.WriteLine(error);return 1;}
     }
 }

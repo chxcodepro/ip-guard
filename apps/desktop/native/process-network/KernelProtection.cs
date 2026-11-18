@@ -7,7 +7,7 @@ using System.Threading;
 
 namespace IpGuard.ProcessNetwork {
     public sealed class KernelStatus {
-        public bool installed,loaded,enabled,ready,supported;
+        public bool installed,loaded,enabled,ready,supported,hvci,rebootRequired;
         public string phase="not_installed",error="",version="Fort 3.20.9 / ABI 65";
         public int[] localPorts=new int[0];
     }
@@ -19,26 +19,28 @@ namespace IpGuard.ProcessNetwork {
         readonly Action<bool> setGate;
         readonly HashSet<string> roots=new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         volatile string failure="";
-        bool supported;
+        bool supported,hvci,rebootRequired;
         bool starting;
         bool activeLoopbackDirect;
         int[] activeLocalPorts=new int[0];
         public KernelProtection(Action<bool> setGate) {
             this.setGate=setGate;
-            try {FortEnvironment.ReadPlatform().RequirePlatform();supported=true;} catch(Exception error) {failure=error.GetBaseException().Message;}
+            try {var platform=FortEnvironment.ReadPlatform();hvci=platform.HvciConfigured || platform.HvciRunning;platform.RequirePlatform();supported=true;} catch(Exception error) {failure=error.GetBaseException().Message;}
         }
         public bool Live {get {return failure=="" && (runtime==null || runtime.Error=="") && device!=null && controller!=null && (controller.Phase==ControllerPhase.Ready || controller.Phase==ControllerPhase.Paused);}}
         public KernelStatus Status(bool enabled) {
-            var result=new KernelStatus {enabled=enabled,supported=supported,ready=Live,error=failure,localPorts=Live ? activeLocalPorts : new int[0]};
+            var result=new KernelStatus {enabled=enabled,supported=supported,hvci=hvci,rebootRequired=rebootRequired,ready=Live,error=failure,localPorts=Live ? activeLocalPorts : new int[0]};
             if(result.error=="" && runtime!=null) result.error=runtime.Error;
             try {var record=OwnedDriverRegistration.Read();if(record!=null) {result.installed=true;result.loaded=record.Validate(false)==4;if(record.RecoveryPending && result.error=="") result.error="驱动需要恢复，请点击恢复后重试。";}}
             catch(Exception error) {result.error=error.GetBaseException().Message;}
+            if(rebootRequired) result.error=failure;
             result.ready=Live && result.loaded && result.error=="";
             if(!result.ready) result.localPorts=new int[0];
             result.phase=result.error!="" ? "failed" : starting ? "starting" : result.ready ? "ready" : result.installed ? "disabled" : "not_installed";
             return result;
         }
         public void Install() {OwnedDriverRegistration.Install();failure="";}
+        public void RequestDisableMemoryIntegrity() {FortEnvironment.RequestDisableMemoryIntegrity();rebootRequired=true;failure="内存完整性关闭请求已保存，请重启 Windows 后继续。";}
         public void Start(EgressPolicy egress,IEnumerable<Target> targets,bool recover=false) {
             starting=true;
             try {

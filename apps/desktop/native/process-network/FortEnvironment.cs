@@ -33,7 +33,7 @@ namespace IpGuard.ProcessNetwork {
             }
             if(!found) return new FortEnvironment(false,false,false,false,false,false);
             using(RegistryKey machine=RegistryKey.OpenBaseKey(RegistryHive.LocalMachine,RegistryView.Registry64)) {
-                foreach(string keyName in new[] {@"SYSTEM\CurrentControlSet\Control\DeviceGuard\Scenarios\HypervisorEnforcedCodeIntegrity",@"SOFTWARE\Policies\Microsoft\Windows\DeviceGuard"})
+                foreach(string keyName in new[] {@"SYSTEM\CurrentControlSet\Control\DeviceGuard\Scenarios\HypervisorEnforcedCodeIntegrity",@"SOFTWARE\Policies\Microsoft\Windows\DeviceGuard",@"SOFTWARE\Microsoft\PolicyManager\current\device\VirtualizationBasedTechnology"})
                 using(RegistryKey key=machine.OpenSubKey(keyName)) if(key!=null) {
                     string name=keyName.StartsWith("SYSTEM",StringComparison.Ordinal) ? "Enabled" : "HypervisorEnforcedCodeIntegrity";
                     object value=key.GetValue(name);
@@ -42,6 +42,39 @@ namespace IpGuard.ProcessNetwork {
                 }
             }
             return new FortEnvironment(true,configured,running,false,false,false);
+        }
+        static int Dword(RegistryKey key,string name) {
+            object value=key==null ? null : key.GetValue(name);
+            if(value==null) return 0;
+            if(!(value is int)) throw new InvalidDataException("内存完整性设置格式无效，保持系统设置原样。");
+            return (int)value;
+        }
+        internal static void RequireEditableHvci(int policy,int deviceLock,int hvciLock,int enabled) {
+            if(policy!=0) throw new InvalidOperationException("内存完整性由组织策略管理，保持设置原样。");
+            if(deviceLock!=0 || hvciLock!=0) throw new InvalidOperationException("内存完整性由 UEFI 锁定，保持设置原样。");
+            if(enabled!=0 && enabled!=1) throw new InvalidDataException("内存完整性开关值无效，保持设置原样。");
+        }
+        public static void RequestDisableMemoryIntegrity() {
+            SystemPolicy.RequireAdmin();
+            FortEnvironment platform=ReadPlatform();
+            if(!platform.Known) throw new InvalidOperationException("无法确认内存完整性状态，保持系统设置原样。");
+            if(!platform.HvciConfigured && !platform.HvciRunning) throw new InvalidOperationException("内存完整性已关闭，请重新打开 IP Guard 后安装驱动。");
+            using(RegistryKey machine=RegistryKey.OpenBaseKey(RegistryHive.LocalMachine,RegistryView.Registry64)) {
+                using(RegistryKey policy=machine.OpenSubKey(@"SOFTWARE\Policies\Microsoft\Windows\DeviceGuard"))
+                using(RegistryKey mdm=machine.OpenSubKey(@"SOFTWARE\Microsoft\PolicyManager\current\device\VirtualizationBasedTechnology"))
+                using(RegistryKey device=machine.OpenSubKey(@"SYSTEM\CurrentControlSet\Control\DeviceGuard"))
+                using(RegistryKey setting=machine.OpenSubKey(@"SYSTEM\CurrentControlSet\Control\DeviceGuard\Scenarios\HypervisorEnforcedCodeIntegrity")) {
+                    if(setting==null) throw new InvalidOperationException("本机内存完整性开关不可用，请在 Windows 安全中心检查。");
+                    int managed=Dword(policy,"HypervisorEnforcedCodeIntegrity") | Dword(mdm,"HypervisorEnforcedCodeIntegrity");
+                    RequireEditableHvci(managed,Dword(device,"Locked"),Dword(setting,"Locked"),Dword(setting,"Enabled"));
+                }
+                using(RegistryKey setting=machine.OpenSubKey(@"SYSTEM\CurrentControlSet\Control\DeviceGuard\Scenarios\HypervisorEnforcedCodeIntegrity",true)) {
+                    if(setting==null) throw new InvalidOperationException("内存完整性设置已变化，保持驱动关闭。");
+                    // Change only the local HVCI switch; policy, VBS and Secure Boot remain untouched.
+                    setting.SetValue("Enabled",0,RegistryValueKind.DWord);setting.Flush();
+                    if(Dword(setting,"Enabled")!=0) throw new IOException("内存完整性关闭请求未保存，保持驱动关闭。");
+                }
+            }
         }
         public static FortEnvironment Read() {
             FortEnvironment platform=ReadPlatform();platform.RequirePlatform();
