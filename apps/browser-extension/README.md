@@ -4,8 +4,8 @@
 
 ## 安装
 
-1. 在桌面「防护设置 → Claude 网页防护」准备扩展，或解压 `IP-Guard-Browser-<版本>.zip`。
-2. Chrome 打开 `chrome://extensions/`，Edge 打开 `edge://extensions/`；开启开发者模式，加载扩展目录。
+1. 在桌面「防护设置 → Claude 网页防护」准备扩展，注册网页连接。
+2. 把打开的扩展文件夹复制到「下载」等可写位置，或把 `IP-Guard-Browser-<版本>.zip` 解压到该位置。Chrome 打开 `chrome://extensions/`，Edge 打开 `edge://extensions/`；开启开发者模式，选择包含 `manifest.json` 的可写目录。浏览器会在其中生成规则索引；从只读安装目录加载可能报 `rules.json: Internal error while parsing rules.`。
 3. 保持桌面运行并锁定允许 IPv4。插件校验通过后，直接输入 claude.ai 或点击「打开 Claude」「返回 Claude」进入网站。
 
 使用过 0.12.x / 0.13.0–0.13.3 的用户，请先移除旧 IP Guard 扩展，再加载新版，以释放旧版代理和 WebRTC 覆盖。保留官方 Claude 插件；旧版曾暂停它时请手动重新启用。普通网页扩展版本后续更新覆盖目录并重新加载即可。

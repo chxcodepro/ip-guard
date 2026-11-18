@@ -137,25 +137,22 @@ export function BrowserExtensionPanel({
           <ol>
             <li>
               {isNewerExtensionVersion(status.latestVersion, nativeVersion)
-                ? "从 IP Guard 目录加载的扩展：先更新桌面程序，再到扩展管理页点击「重新加载」。"
-                : "从 IP Guard 目录加载的扩展：在扩展管理页点击「重新加载」。"}
+                ? "随桌面安装：先更新桌面程序，再用新版文件覆盖浏览器加载的扩展副本，点击「重新加载」。"
+                : "随桌面安装：用桌面版附带的文件覆盖浏览器加载的扩展副本，再点击「重新加载」。"}
             </li>
             <li>独立 ZIP：从 Releases 下载新版，解压覆盖原目录，再点击「重新加载」。</li>
           </ol>
         </div>
       )}
-      {!updateAvailable && (status.phase === "missing" || guide) && (
+      {(guide || (!updateAvailable && status.phase === "missing")) && (
         <div className="extension-guide">
           <ol>
-            <li>
-              点击「{status.phase === "missing" ? "准备安装扩展" : "打开扩展文件夹"}
-              」，打开扩展目录。
-            </li>
+            <li>把打开的扩展文件夹复制到「下载」等可写位置。</li>
             <li>
               Chrome 打开 <code>chrome://extensions</code>；Edge 打开 <code>edge://extensions</code>
               。
             </li>
-            <li>开启「开发者模式」→「加载已解压的扩展」，选择刚打开的文件夹。</li>
+            <li>开启「开发者模式」→「加载已解压的扩展」，选择复制后的文件夹。</li>
           </ol>
         </div>
       )}
