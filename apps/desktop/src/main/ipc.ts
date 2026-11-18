@@ -252,6 +252,7 @@ export const setupIpc = (
       const snapshot = await guardian.request("status");
       const target = snapshot.apps.find((item) => item.id === command.id);
       if (!target) throw new Error("程序不存在");
+      if (target.pathIssue) throw new Error(`${target.name} · ${target.pathIssue}`);
       if (command.enabled) {
         await proxyEnhancement.refresh();
         if (proxyEnhancement.state.phase !== "ready") throw new Error(proxyEnhancement.state.error);
@@ -304,6 +305,12 @@ export const setupIpc = (
         if (!snapshot.admin) throw new Error("请以管理员身份重启 IP Guard");
         const installing = command.action === "kernel:install";
         const rescuing = command.action === "kernel:rescue";
+        if (command.action === "kernel:repair") {
+          const stale = snapshot.apps.find(
+            (item) => item.enabled && item.enhanced && item.pathIssue,
+          );
+          if (stale) throw new Error(`${stale.name} · ${stale.pathIssue}`);
+        }
         if (snapshot.driver.hvci && !rescuing) {
           const answer = await dialog.showMessageBox({
             type: "warning",

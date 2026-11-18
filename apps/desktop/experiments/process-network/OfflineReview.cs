@@ -222,7 +222,25 @@ namespace IpGuard.ProcessNetwork {
             Throws<InvalidOperationException>(()=>FortEnvironment.RequireEditableHvci(0,0,1,1),"HVCI firmware lock stays unchanged");
             Throws<InvalidDataException>(()=>FortEnvironment.RequireEditableHvci(0,0,0,2),"unknown HVCI switch value stays unchanged");
         }
+        static void DesktopPathCases() {
+            string folder=Path.Combine(Path.GetTempPath(),"IPGuard-DesktopPath-"+Guid.NewGuid().ToString("N"));
+            string install=Path.Combine(folder,"Claude_5.11492.5.0_x64__pzs8sxrjxfjjc");
+            string image=Path.Combine(install,"Claude.exe");
+            Check(PackagePolicy.IsMissingClaudeDesktop(image),"removed MSIX directory can be retired without rebuilding its WFP app ID");
+            Guard.BlockExistingTarget(new Target {id=Guid.NewGuid().ToString("D"),name="Offline Desktop fixture",path=image,enabled=true,enhanced=true});
+            Check(!PackagePolicy.IsMissingClaudeDesktop(Path.Combine(folder,"Claude.exe")),"missing standalone Claude keeps the ordinary filter checks");
+            Directory.CreateDirectory(install);
+            try {
+                Check(PackagePolicy.IsMissingClaudeDesktop(image),"removed MSIX executable is still absent when the package directory remains");
+                using(File.Create(image)) {}
+                Check(!PackagePolicy.IsMissingClaudeDesktop(image),"existing MSIX executable still requires ordinary filtering");
+            } finally {File.Delete(image);Directory.Delete(install);Directory.Delete(folder);}
+        }
         public static int Main(string[] args) {
+            if(args.Length==1 && args[0]=="--desktop-path-review") {
+                try {DesktopPathCases();Console.WriteLine("PASS: "+assertions+" Desktop path assertions.");return 0;}
+                catch(Exception error) {Console.Error.WriteLine(error);return 1;}
+            }
             if(args.Length!=1 || args[0]!="--self-check") {Console.WriteLine("Offline Fort adapter. --self-check uses memory only; no driver or service access.");return 2;}
             try {
                 ProtocolCases();StateCases();RecoveryCases();MutexCases();HvciCases();BrowserRetirementCases();ModelCases();RetiredModelTestCases();EnhancementCases();ProxySettingsCases();ProbeTimingCases();Ipv4SourceCases();LocalServiceCases();

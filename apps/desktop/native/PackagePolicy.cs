@@ -36,6 +36,12 @@ namespace IpGuard {
             }
             return false;
         }
+        internal static bool IsMissingClaudeDesktop(string exe) {
+            if(!IsClaudeDesktop(exe)) return false;
+            try { File.GetAttributes(exe);return false; }
+            catch(FileNotFoundException) { return true; }
+            catch(DirectoryNotFoundException) { return true; }
+        }
         const string Owned = @"Software\IPGuard\PackageDebugging";
         [DllImport("kernel32.dll", CharSet=CharSet.Unicode)] static extern int GetPackagePathByFullName(string package, ref uint length, StringBuilder path);
         [DllImport("kernel32.dll", CharSet=CharSet.Unicode)] static extern int GetPackagesByPackageFamily(string family,ref uint count,IntPtr names,ref uint length,IntPtr buffer);

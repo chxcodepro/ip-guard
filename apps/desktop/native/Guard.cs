@@ -64,7 +64,7 @@ namespace IpGuard {
         }
         void LoadCommandGuard(bool recover=false) {
             if(!config.commandProtection) return;
-            try {commandGuard.Start(EnhancementRoute,config.apps.Where(t=>t.enhanced),recover);commandGuard.Allow(healthy && enhancementReady);commandBlockReason="";}
+            try {RequireEnhancedPaths();commandGuard.Start(EnhancementRoute,config.apps.Where(t=>t.enhanced),recover);commandGuard.Allow(healthy && enhancementReady);commandBlockReason="";}
             catch(Exception error) {commandGuard.SetFailure(error.Message);throw;}
             finally {SystemPolicy.KernelFilteringReady=commandGuard.Live;}
         }
@@ -125,7 +125,9 @@ namespace IpGuard {
         void StopEnhancedTargets() {
             lock(state) {
                 commandGuard.Allow(false);
-                foreach(Target target in config.apps.Where(t=>t.enabled && t.enhanced)) {StopTarget(target.id);SystemPolicy.Block(target,true);}
+                Target[] targets=config.apps.Where(t=>t.enabled && t.enhanced).ToArray();
+                foreach(Target target in targets) StopTarget(target.id);
+                foreach(Target target in targets) BlockExistingTarget(target);
             }
         }
         void TripEnhanced(string why) {
@@ -230,6 +232,17 @@ namespace IpGuard {
         string PathIssue(Target target) {
             return PackagePolicy.IsClaudeDesktop(target.path) && (staleDesktopPaths.Contains(target.id) || !File.Exists(target.path)) ? "安装目录已更新，请先更新路径" : "";
         }
+        void RequireEnhancedPaths() {
+            foreach(Target target in config.apps.Where(t=>t.enabled && t.enhanced)) RequireCurrentPath(target);
+        }
+        void RequireCurrentPath(Target target) {
+            if(PathIssue(target)!="") throw new InvalidOperationException(target.name+" · 安装路径已失效，请在「受保护程序」中点击「更新路径」。");
+        }
+        internal static void BlockExistingTarget(Target target) {
+            // WFP cannot derive an app ID from a removed executable; confirm no old instance remains.
+            if(PackagePolicy.IsMissingClaudeDesktop(target.path)) RequireClosed(target);
+            else SystemPolicy.Block(target,true);
+        }
         void Relocate(Target previous,string path) {
             lock(state) {
             RequireCommandChangesClosed();
@@ -245,7 +258,7 @@ namespace IpGuard {
             if(config.commandProtection) StopCommandGuard();
             try {
                 if(previous.enabled) {
-                    SystemPolicy.Block(previous,true);StopTarget(previous.id);
+                    BlockExistingTarget(previous);StopTarget(previous.id);
                     SystemPolicy.Unintercept(previous);SystemPolicy.RemoveFirewall(previous);
                     installing=true;
                     SystemPolicy.Block(next,true);SystemPolicy.Intercept(next,next.enhanced ? EnhancementRoute : null);
@@ -256,7 +269,7 @@ namespace IpGuard {
                 if(previous.enabled) {
                     List<Action> recovery=new List<Action>();List<string> failures=new List<string>();
                     if(installing) {recovery.Add(()=>SystemPolicy.Unintercept(next));recovery.Add(()=>SystemPolicy.RemoveFirewall(next));}
-                    recovery.Add(()=>SystemPolicy.Block(previous,true));
+                    recovery.Add(()=>BlockExistingTarget(previous));
                     if(File.Exists(previous.path)) recovery.Add(()=>{
                         try {PackagePolicy.Find(previous.path);SystemPolicy.Intercept(previous,previous.enhanced ? EnhancementRoute : null);}
                         catch(PackageUnavailableException) { }
@@ -271,7 +284,8 @@ namespace IpGuard {
                 throw new Exception("路径迁移失败，原配置已保留。"+error.GetBaseException().Message);
             }
             Log("info",next.name+" · 已更新安装路径，保留原防护配置");
-            LoadCommandGuard();
+            try {LoadCommandGuard();}
+            catch(Exception error) {Log("warning",next.name+" · 路径已更新，严格命令防护暂未恢复 · "+error.GetBaseException().Message);}
             }
         }
         void Protect(Target t, bool enabled) {
@@ -349,6 +363,7 @@ namespace IpGuard {
                 } else if(action=="kernel:hvci:disable") {
                     commandGuard.RequestDisableMemoryIntegrity();Log("warning","已按用户确认关闭本机内存完整性设置；等待重启后复核，驱动未加载");
                 } else if(action=="kernel:repair") {
+                    RequireEnhancedPaths();
                     TripEnhanced("命令防护正在恢复，增强会话已停止");
                     StopCommandGuard();LoadCommandGuard(true);Log("info","命令进程树防护已恢复");Check();
                 } else if(action == "egress:pause") {
@@ -412,6 +427,7 @@ namespace IpGuard {
                     if(action=="enhance") {
                         bool enabled=(bool)input["enabled"];
                         if(enabled==t.enhanced) return Snapshot();
+                        RequireCurrentPath(t);
                         if(enabled && (!t.enabled || !config.rulesLocked)) throw new Exception("请先锁定 IP 并开启该程序的基础防护。");
                         if(enabled && config.egress!=null) throw new Exception("请先关闭历史独立出口，再使用当前代理增强。");
                         if(enabled && enhancementPolicy==null) throw new Exception("通用代理通道尚未就绪。");
@@ -438,10 +454,10 @@ namespace IpGuard {
                             t.enhanced=previous;config.commandProtection=previousProtection;
                             try {
                                 if(commandGuard.Live) StopCommandGuard();
-                                SystemPolicy.Block(t,true);
+                                BlockExistingTarget(t);
                                 if(desktopPolicyAttempted)
                                     DesktopProxyPolicy.Apply(previous ? EnhancementRoute.Url : config.egress==null ? null : config.egress.Url);
-                                if(interceptionAttempted)
+                                if(interceptionAttempted && !PackagePolicy.IsMissingClaudeDesktop(t.path))
                                     SystemPolicy.Intercept(t,previous ? EnhancementRoute : null);
                                 if(config.commandProtection) LoadCommandGuard(true);
                             } catch(Exception recovery) { throw new Exception("增强切换失败，原防护恢复也遇到错误："+error.GetBaseException().Message+"；"+recovery.GetBaseException().Message); }
