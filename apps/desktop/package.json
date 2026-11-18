@@ -1,6 +1,6 @@
 {
   "name": "@ip-guard/desktop",
-  "version": "0.15.6",
+  "version": "0.15.7",
   "private": true,
   "license": "GPL-3.0-only",
   "description": "Application IPv4 launch gate and managed network guardian",
