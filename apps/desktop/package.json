@@ -1,10 +1,10 @@
 {
   "name": "@ip-guard/desktop",
-  "version": "0.15.7",
+  "version": "0.15.8",
   "private": true,
-  "license": "GPL-3.0-only",
   "description": "Application IPv4 launch gate and managed network guardian",
   "homepage": "https://github.com/chxcodepro/ip-guard",
+  "license": "GPL-3.0-only",
   "type": "module",
   "main": "./dist/main/index.js",
   "imports": {
