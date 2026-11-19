@@ -23,9 +23,9 @@ namespace IpGuard {
                     if(equal<0 && i+1>=args.Length) throw new InvalidDataException("--settings 缺少设置值。");
                     found=i;if(equal<0) i++;
                 } else if(equal<0 && ClaudeCodeScope.TakesValue(name)) {
-                    if(i+1<args.Length) i++;
+                    if(ClaudeCodeScope.HasNextValue(args,i)) i++;
                 } else if(equal<0 && !ClaudeCodeScope.IsSwitch(name) &&
-                    !new[] {"--resume","-r","--continue","-c","--fork-session"}.Contains(name) && i+1<args.Length &&
+                    !new[] {"-r","--continue","-c","--fork-session"}.Contains(name) && i+1<args.Length &&
                     (args[i+1]=="--settings" || args[i+1].StartsWith("--settings=",StringComparison.Ordinal))) {
                     // shortcut: unknown option arity is ambiguous here; extend the shared grammar when that CLI option is supported.
                     throw new InvalidDataException("无法区分 "+name+" 的参数值与 --settings，请使用 "+name+"=值 的形式后重试。");

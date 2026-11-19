@@ -333,9 +333,16 @@ namespace IpGuard.ProcessNetwork {
             Check(overlay.Count==1 && ((Dictionary<string,object>)overlay["env"]).Count==10,"default session overlay leaves provider settings to existing files");
             string[] prompt={"claude.exe","--system-prompt","--settings","--","--settings","message"};
             Check(ClaudeProxySettings.SettingsIndex(prompt)==-1,"settings-looking values and prompt text are never removed");
-            string[] command={"claude.exe","--resume","--settings=custom.json","--model","deepseek-chat","--","message"};
-            int selected=ClaudeProxySettings.SettingsIndex(command);
-            Check(selected==2 && ClaudeProxySettings.Replace(command,selected,@"C:\session.json").SequenceEqual(new[] {"claude.exe","--settings",@"C:\session.json","--resume","--model","deepseek-chat","--","message"}),"existing settings replacement retains resume, model and prompt tokens");
+            foreach(string[] resume in new[] {new[] {"--resume"},new[] {"--resume","session-id"},new[] {"--resume=session-id"}}) {
+                foreach(string[] settings in new[] {new[] {"--settings","custom.json"},new[] {"--settings=custom.json"}}) {
+                    string[] suffix={"--model","deepseek-chat","--","message"};
+                    string[] command=new[] {"claude.exe"}.Concat(resume).Concat(settings).Concat(suffix).ToArray();
+                    int selected=ClaudeProxySettings.SettingsIndex(command);
+                    Check(selected==1+resume.Length && ClaudeProxySettings.Replace(command,selected,@"C:\session.json").SequenceEqual(new[] {"claude.exe","--settings",@"C:\session.json"}.Concat(resume).Concat(suffix)),"existing settings replacement retains resume, model and prompt tokens: "+String.Join(" ",command));
+                }
+            }
+            string[] picker={"claude.exe","--resume"};
+            Check(ClaudeProxySettings.SettingsIndex(picker)==-1 && ClaudeProxySettings.Replace(picker,-1,"session.json").SequenceEqual(new[] {"claude.exe","--settings","session.json","--resume"}),"resume picker at the end retains its optional value");
             string[] spaced={"claude.exe","--settings","original.json","-p","message"};
             Check(ClaudeProxySettings.Replace(spaced,ClaudeProxySettings.SettingsIndex(spaced),"session.json").SequenceEqual(new[] {"claude.exe","--settings","session.json","-p","message"}),"separate settings file syntax is replaced once");
             Check(ClaudeProxySettings.Replace(prompt,-1,"session.json").Skip(3).SequenceEqual(prompt.Skip(1)),"adding an overlay retains every original argument");
