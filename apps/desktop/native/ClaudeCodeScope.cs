@@ -50,10 +50,14 @@ namespace IpGuard {
             return new ModelDecision("unknown","网关模型未能识别，当前按锁定的出口保护");
         }
         static readonly string[] SelectedOptions={"--model","--settings","--setting-sources"};
-        static readonly string[] SwitchOptions={"-p","--print","-h","--help","-v","--version","--verbose","--ide","--strict-mcp-config","--no-session-persistence","--dangerously-skip-permissions","--allow-dangerously-skip-permissions"};
-        static readonly string[] ValueOptions={"--system-prompt","--append-system-prompt","--system-prompt-file","--append-system-prompt-file","--json-schema","--output-format","--input-format","--permission-mode","--session-id","--name","--max-turns","--max-budget-usd"};
+        static readonly string[] SwitchOptions={"-p","--print","-h","--help","-v","--version","--verbose","--ide","--strict-mcp-config","--no-session-persistence","--dangerously-skip-permissions","--allow-dangerously-skip-permissions","--include-partial-messages"};
+        static readonly string[] ValueOptions={"--system-prompt","--append-system-prompt","--system-prompt-file","--append-system-prompt-file","--json-schema","--output-format","--input-format","--permission-mode","--session-id","--name","--max-turns","--max-budget-usd","--thinking-display","--resume","--allowedTools","--mcp-config"};
         internal static bool TakesValue(string name) {return SelectedOptions.Contains(name) || ValueOptions.Contains(name);}
         internal static bool IsSwitch(string name) {return SwitchOptions.Contains(name);}
+        internal static bool HasNextValue(string[] args,int index) {
+            // Bare --resume opens a picker instead of consuming the following option.
+            return index+1<args.Length && (args[index]!="--resume" || !args[index+1].StartsWith("-",StringComparison.Ordinal));
+        }
         internal static Dictionary<string,string> Options(string[] args) {
             var result=new Dictionary<string,string>(StringComparer.Ordinal);
             for(int i=1;i<args.Length;i++) {
@@ -62,7 +66,7 @@ namespace IpGuard {
                 int separator=arg.IndexOf('=');string name=separator<0 ? arg : arg.Substring(0,separator);
                 if(IsSwitch(name) && separator<0) continue;
                 if(!TakesValue(name)) throw new InvalidDataException("启动选项需手动标记 API 类型。");
-                if(separator<0 && i+1>=args.Length) throw new InvalidDataException("缺少启动选项值。");
+                if(separator<0 && !HasNextValue(args,i)) throw new InvalidDataException("缺少启动选项值。");
                 if(SelectedOptions.Contains(name)) {
                     if(result.ContainsKey(name)) throw new InvalidDataException("启动选项重复。");
                     result.Add(name,separator<0 ? args[i+1] : arg.Substring(separator+1));
