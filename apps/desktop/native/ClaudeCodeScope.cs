@@ -51,7 +51,13 @@ namespace IpGuard {
         }
         static readonly string[] SelectedOptions={"--model","--settings","--setting-sources"};
         static readonly string[] SwitchOptions={"-p","--print","-h","--help","-v","--version","--verbose","--ide","--strict-mcp-config","--no-session-persistence","--dangerously-skip-permissions","--allow-dangerously-skip-permissions","--include-partial-messages"};
-        static readonly string[] ValueOptions={"--system-prompt","--append-system-prompt","--system-prompt-file","--append-system-prompt-file","--json-schema","--output-format","--input-format","--permission-mode","--session-id","--name","--max-turns","--max-budget-usd","--thinking-display","--resume","--allowedTools","--mcp-config"};
+        static readonly string[] ValueOptions={
+            "--system-prompt","--append-system-prompt","--system-prompt-file","--append-system-prompt-file",
+            "--json-schema","--output-format","--input-format","--permission-mode","--session-id","--name",
+            "--max-turns","--max-budget-usd","--thinking","--thinking-display","--effort","--resume",
+            "--resume-session-at","--permission-prompt-tool","--allowedTools","--allowed-tools",
+            "--disallowedTools","--disallowed-tools","--tools","--mcp-config","--add-dir"
+        };
         internal static bool TakesValue(string name) {return SelectedOptions.Contains(name) || ValueOptions.Contains(name);}
         internal static bool IsSwitch(string name) {return SwitchOptions.Contains(name);}
         internal static bool HasNextValue(string[] args,int index) {

@@ -170,6 +170,27 @@ namespace IpGuard.ProcessNetwork {
                 "--allowedTools","Read","--mcp-config","{\"mcpServers\":{}}","--model","claude-sonnet"
             });
             Check(sdkOptions.Count==1 && sdkOptions["--model"]=="claude-sonnet","SDK streaming and session options preserve model detection");
+            // T3's bundled Agent SDK 0.3.321 emits both inline and separate values.
+            var t3Args=new[] {
+                "claude.exe","--output-format","stream-json","--verbose","--input-format","stream-json",
+                "--thinking=adaptive","--thinking-display=summarized","--effort=medium",
+                "--model=claude-opus-5-5","--permission-prompt-tool=stdio","--allowedTools=Read",
+                "--tools=default","--mcp-config","{\"mcpServers\":{}}","--permission-mode=bypassPermissions",
+                "--allow-dangerously-skip-permissions","--include-partial-messages","--add-dir=C:\\workspace",
+                "--session-id=00000000-0000-4000-8000-000000000001","--thinking-display","summarized",
+                "--settings","{\"showThinkingSummaries\":true}"
+            };
+            var t3Options=ClaudeCodeScope.Options(t3Args);
+            Check(t3Options["--model"]=="claude-opus-5-5" && t3Options["--settings"]=="{\"showThinkingSummaries\":true}","T3 SDK startup retains the selected model and original settings");
+            Check(ClaudeProxySettings.SettingsIndex(t3Args)==Array.IndexOf(t3Args,"--settings"),"T3 SDK startup locates the original settings for proxy injection");
+            var resumedT3=new List<string>(t3Args);
+            resumedT3.Insert(resumedT3.IndexOf("--allowedTools=Read"),"--resume=00000000-0000-4000-8000-000000000001");
+            resumedT3.Insert(resumedT3.IndexOf("--tools=default"),"--disallowedTools=Edit");
+            resumedT3[resumedT3.IndexOf("--session-id=00000000-0000-4000-8000-000000000001")]="--resume-session-at=00000000-0000-4000-8000-000000000002";
+            var resumedT3Args=resumedT3.ToArray();
+            var resumedT3Options=ClaudeCodeScope.Options(resumedT3Args);
+            Check(resumedT3Options.Count==t3Options.Count && resumedT3Options.All(option=>t3Options[option.Key]==option.Value),"T3 SDK continuation retains the selected model and original settings");
+            Check(ClaudeProxySettings.SettingsIndex(resumedT3Args)==Array.IndexOf(resumedT3Args,"--settings"),"T3 SDK continuation locates the original settings for proxy injection");
             Throws<InvalidDataException>(()=>ClaudeCodeScope.Options(new[] {"claude.exe","--resume","--model","claude-sonnet"}),"bare resume does not consume a model flag");
             Check(ClaudeCodeScope.Options(new[] {"claude.exe","--","--model","deepseek-chat"}).Count==0,"model-like prompt text after end-of-options is not a model override");
             Check(!ClaudeCodeScope.Options(new[] {"claude.exe","--system-prompt","--model","deepseek-chat"}).ContainsKey("--model"),"a model-like system prompt value is not mistaken for a model flag");
