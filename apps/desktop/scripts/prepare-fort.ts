@@ -1,7 +1,9 @@
-import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { copyFile, mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
+
+import { windowsPowerShellEnvironment } from "./windows-powershell.ts";
 
 const desktop = path.resolve(import.meta.dirname, "..");
 const root = path.resolve(desktop, "../..");
@@ -40,8 +42,17 @@ const tools = path.join(cache, "tools");
 const extracted = path.join(cache, "extracted");
 const expanded = spawnSync(
   "powershell.exe",
-  ["-NoProfile", "-NonInteractive", "-Command", "Expand-Archive -LiteralPath $env:FORT_ARCHIVE -DestinationPath $env:FORT_TOOLS -Force"],
-  { windowsHide: true, stdio: "inherit", env: { ...process.env, FORT_ARCHIVE: tool, FORT_TOOLS: tools } },
+  [
+    "-NoProfile",
+    "-NonInteractive",
+    "-Command",
+    "$ErrorActionPreference='Stop'; Expand-Archive -LiteralPath $env:FORT_ARCHIVE -DestinationPath $env:FORT_TOOLS -Force",
+  ],
+  {
+    windowsHide: true,
+    stdio: "inherit",
+    env: { ...windowsPowerShellEnvironment(), FORT_ARCHIVE: tool, FORT_TOOLS: tools },
+  },
 );
 if (expanded.error) throw expanded.error;
 if (expanded.status !== 0) throw new Error("Fort extraction helper expansion failed");
@@ -53,11 +64,22 @@ const extraction = spawnSync(
 if (extraction.error) throw extraction.error;
 if (extraction.status !== 0) throw new Error("Fort driver offline extraction failed");
 const driver = await readFile(path.join(extracted, "{app}/driver/x86_64/fortfw.sys"));
-if (createHash("sha256").update(driver).digest("hex") !== "58681fa853a92b15df5cd53cc96c93bebf3c8769cb5851a2ceaebcf70766dd6b")
+if (
+  createHash("sha256").update(driver).digest("hex") !==
+  "58681fa853a92b15df5cd53cc96c93bebf3c8769cb5851a2ceaebcf70766dd6b"
+)
   throw new Error("Fort driver does not match the reviewed signed image");
 await writeFile(path.join(output, "fortfw.sys"), driver);
-const source = await acquire("Fort-3.20.9-source.zip", "https://github.com/tnodir/fort/archive/refs/tags/v3.20.9.zip");
+const source = await acquire(
+  "Fort-3.20.9-source.zip",
+  "https://github.com/tnodir/fort/archive/refs/tags/v3.20.9.zip",
+);
 await copyFile(source, path.join(output, "Fort-3.20.9-source.zip"));
 await copyFile(path.join(root, "LICENSE"), path.join(output, "COPYING.GPL-3.0.txt"));
-await writeFile(path.join(output, "NOTICE.txt"), "Fort Firewall 3.20.9 / driver ABI 65\nCopyright Nodir Temirkhodjaev and contributors. GPL-3.0.\nOriginal, unmodified x64 driver; Microsoft Windows Hardware Compatibility Publisher signature.\nCorresponding source and build files: Fort-3.20.9-source.zip\nUpstream: https://github.com/tnodir/fort/tree/v3.20.9\n\nThis installer places files only. Driver installation and activation require explicit confirmation in IP Guard.\n");
-console.log("Prepared original Fort driver and corresponding GPL source; no installer or driver was run.");
+await writeFile(
+  path.join(output, "NOTICE.txt"),
+  "Fort Firewall 3.20.9 / driver ABI 65\nCopyright Nodir Temirkhodjaev and contributors. GPL-3.0.\nOriginal, unmodified x64 driver; Microsoft Windows Hardware Compatibility Publisher signature.\nCorresponding source and build files: Fort-3.20.9-source.zip\nUpstream: https://github.com/tnodir/fort/tree/v3.20.9\n\nThis installer places files only. Driver installation and activation require explicit confirmation in IP Guard.\n",
+);
+console.log(
+  "Prepared original Fort driver and corresponding GPL source; no installer or driver was run.",
+);

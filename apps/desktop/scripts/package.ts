@@ -3,6 +3,8 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import path from "node:path";
 
+import { windowsPowerShellEnvironment } from "./windows-powershell.ts";
+
 const root = path.resolve(import.meta.dirname, "..");
 const repository = process.env.GITHUB_REPOSITORY ?? "";
 if (repository && !/^[A-Za-z0-9][A-Za-z0-9-]{0,38}\/[A-Za-z0-9_.-]{1,100}$/.test(repository))
@@ -48,7 +50,7 @@ if (result.status === 0 && windows) {
     ],
     {
       env: {
-        ...process.env,
+        ...windowsPowerShellEnvironment(),
         IP_GUARD_EXTENSION_DIR: path.resolve(root, "../browser-extension/dist"),
         IP_GUARD_EXTENSION_ZIP: path.join(
           root,
