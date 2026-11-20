@@ -660,7 +660,7 @@ namespace IpGuard {
                         if(other) Log("info",target.name+" · 已启动，使用原网络，未加入 IPv4 防护");
                     }
                     if(!inherited && !session.otherModel) Log("info", target.name + " · 校验通过，已启动"); Publish();
-                    Task<string> alive = Task.Run(() => reader.ReadLine());
+                    Task<string> alive = Task.Factory.StartNew(() => reader.ReadLine(),CancellationToken.None,TaskCreationOptions.LongRunning,TaskScheduler.Default);
                     while(!quit && !session.stopped && !alive.IsCompleted) {
                         if(!session.otherModel && session.epoch!=Volatile.Read(ref epoch)) break;
                         try {writer.WriteLine("lease");} catch(IOException) {break;}

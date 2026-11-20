@@ -11,11 +11,11 @@ namespace IpGuard {
             try {Win32.Check(QueryInformationJobObject(job,1,data,48,IntPtr.Zero));return Marshal.ReadInt32(data,40)>0;}
             finally {Marshal.FreeHGlobal(data);}
         }
-        public static void Run(Win32.ProcessInfo root,IntPtr job,Func<bool> active,Func<bool> heartbeat,bool protectChildren) {
+        public static void Run(Win32.ProcessInfo root,IntPtr job,Func<bool> active,Action requireHeartbeat,bool protectChildren) {
             var debugged=new HashSet<uint>();debugged.Add(root.pid);
             try {
                 while(active()) {
-                    if(!heartbeat()) throw new Exception("守护连接超时，受保护程序已结束。");
+                    requireHeartbeat();
                     Win32.DebugEvent item;
                     if(!Win32.WaitForDebugEvent(out item,200)) {if(protectChildren && !HasProcesses(job)) break;continue;}
                     if(protectChildren && item.code==3) {
@@ -28,7 +28,7 @@ namespace IpGuard {
                     Win32.Check(Win32.ContinueDebugEvent(item.pid,item.tid,status));
                     if(item.code==5) debugged.Remove(item.pid);
                     if(item.code==5 && item.pid==root.pid && !protectChildren) {
-                        while(active() && HasProcesses(job)) {if(!heartbeat()) throw new Exception("守护连接超时，受保护程序已结束。");Thread.Sleep(200);}break;
+                        while(active() && HasProcesses(job)) {requireHeartbeat();Thread.Sleep(200);}break;
                     }
                     if(protectChildren && item.code==5 && !HasProcesses(job)) break;
                 }

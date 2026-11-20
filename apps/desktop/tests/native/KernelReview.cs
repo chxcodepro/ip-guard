@@ -109,7 +109,7 @@ public static class KernelReview {
                     Win32.Check(Win32.CreateProcess(exe,new StringBuilder(Data.Quote(exe)+" server"),IntPtr.Zero,IntPtr.Zero,false,0x08000005,IntPtr.Zero,Path.GetDirectoryName(exe),ref startup,out info));
                     Pid=info.pid;Win32.Check(Win32.DebugSetProcessKillOnExit(true));Win32.Check(Win32.AssignProcessToJobObject(job,info.process));
                     ProcessTreeMetadata.PrepareRoot(info.pid);Win32.ResumeThread(info.thread);created.Set();
-                    DebugProcessTree.Run(info,job,()=>true,()=>true,true);
+                    DebugProcessTree.Run(info,job,()=>true,()=>{},true);
                 } catch(Exception error) {Error=error;created.Set();}
                 finally {
                     if(info.process!=IntPtr.Zero) {Win32.TerminateProcess(info.process,1);Win32.DebugActiveProcessStop(info.pid);Win32.CloseHandle(info.thread);Win32.CloseHandle(info.process);}

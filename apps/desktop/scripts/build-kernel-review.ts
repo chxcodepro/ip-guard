@@ -15,6 +15,7 @@ const entries: { main: string; file: string }[] = [
   { main: "ReviewClient", file: "claude.exe" },
   { main: "ReviewClient", file: "child.exe" },
   { main: "HvciReview", file: "IpGuard.HvciReview.exe" },
+  { main: "LeaseReview", file: "IpGuard.LeaseReview.exe" },
 ];
 for (const { main, file } of entries) {
   const result = spawnSync(
@@ -33,6 +34,7 @@ for (const { main, file } of entries) {
       path.join(desktop, "dist/native-build-info.g.cs"),
       ...sources,
       path.join(desktop, "tests/native/KernelReview.cs"),
+      path.join(desktop, "tests/native/LeaseReview.cs"),
     ],
     { stdio: "inherit" },
   );

@@ -22,14 +22,26 @@ namespace IpGuard {
         public EgressPolicy enhancementPolicy;
     }
     public static class LaunchGate {
-        sealed class Lease : IDisposable {
+        internal sealed class Lease : IDisposable {
+            internal const int TimeoutMilliseconds=10000;
             readonly object sync=new object();
             long verified=Stopwatch.GetTimestamp();
             public IntPtr job;
             public volatile bool stopped;
             public Lease(IntPtr handle) { job=handle; }
-            public bool Alive() { return !stopped && Stopwatch.GetTimestamp()-Interlocked.Read(ref verified)<Stopwatch.Frequency*1.8; }
-            public void Begin(StreamReader reader) { Interlocked.Exchange(ref verified,Stopwatch.GetTimestamp()); Task.Run(()=>Read(reader)); }
+            internal double HeartbeatAgeMilliseconds {get {return (Stopwatch.GetTimestamp()-Interlocked.Read(ref verified))*1000.0/Stopwatch.Frequency;}}
+            public bool Alive() { return !stopped && HeartbeatAgeMilliseconds<TimeoutMilliseconds; }
+            public void RequireAlive() {
+                if(stopped) throw new IOException("守护连接已关闭，受保护程序已结束。");
+                long age=(long)HeartbeatAgeMilliseconds;
+                if(age<TimeoutMilliseconds) return;
+                using(Process current=Process.GetCurrentProcess()) throw new TimeoutException("守护连接超时，受保护程序已结束。（门卫 PID "+current.Id+"，上次心跳 "+age+" 毫秒前，阈值 "+TimeoutMilliseconds+" 毫秒）");
+            }
+            public void Begin(StreamReader reader) {
+                Interlocked.Exchange(ref verified,Stopwatch.GetTimestamp());
+                // A live session owns a blocking read for its entire lifetime.
+                Task.Factory.StartNew(()=>Read(reader),CancellationToken.None,TaskCreationOptions.LongRunning,TaskScheduler.Default);
+            }
             void Read(StreamReader reader) {
                 try { string line; while((line=reader.ReadLine())=="lease") Interlocked.Exchange(ref verified,Stopwatch.GetTimestamp()); }
                 catch(IOException) { }
@@ -172,7 +184,7 @@ namespace IpGuard {
             }
         }
         static void MonitorProcess(Win32.ProcessInfo info,Lease lease,bool protectChildren) {
-            DebugProcessTree.Run(info,lease.job,()=>!lease.stopped,lease.Alive,protectChildren);
+            DebugProcessTree.Run(info,lease.job,()=>!lease.stopped,lease.RequireAlive,protectChildren);
         }
     }
 }
