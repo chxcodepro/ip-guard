@@ -155,6 +155,17 @@ export function proxyDiscoveryIssue(error: unknown): string {
   return "本机代理进程查询失败，请稍后重试";
 }
 
+export class ProxyDiscoveryUnavailable extends Error {
+  entry: ProxyEndpoint | undefined;
+}
+
+function discoveryFailure(error: unknown): Error {
+  const issue = proxyDiscoveryIssue(error);
+  if (issue === "代理核心查询超时，请稍后重试" || issue === "本机代理进程查询失败，请稍后重试")
+    return new ProxyDiscoveryUnavailable(issue);
+  return new Error(issue);
+}
+
 export type ProxySource = { executable: string; config: string; node: NodeSnapshot; key: string };
 export function proxyEngine(executable: string): NodeSnapshot["engine"] | undefined {
   const name = path.win32
@@ -209,6 +220,8 @@ export class ForcedProxy {
   private folder = "";
   private image = "";
   private activeKey = "";
+  private sourceEntry: string | undefined;
+  private activeStamp = "";
   endpoint: ProxyEndpoint | undefined;
   get allocated() {
     return Boolean(this.child || this.folder);
@@ -221,21 +234,27 @@ export class ForcedProxy {
   async locate(): Promise<ProxyEndpoint> {
     if (this.automaticEntry && performance.now() - this.entryAt < 10000) return this.automaticEntry;
     try {
-      const { stdout } = await execute(
-        "powershell.exe",
-        ["-NoProfile", "-NonInteractive", "-Command", discovery],
-        {
-          windowsHide: true,
-          timeout: discoveryTimeoutMs,
-          maxBuffer: 8192,
-          env: {
-            ...process.env,
-            IPGUARD_PROXY_PORT: "0",
-            IPGUARD_EXPECTED_IMAGE: "",
-            IPGUARD_CONTROLLER_PIPE: "",
+      this.checking();
+      let stdout: string;
+      try {
+        ({ stdout } = await execute(
+          "powershell.exe",
+          ["-NoProfile", "-NonInteractive", "-Command", discovery],
+          {
+            windowsHide: true,
+            timeout: discoveryTimeoutMs,
+            maxBuffer: 8192,
+            env: {
+              ...process.env,
+              IPGUARD_PROXY_PORT: "0",
+              IPGUARD_EXPECTED_IMAGE: "",
+              IPGUARD_CONTROLLER_PIPE: "",
+            },
           },
-        },
-      );
+        ));
+      } catch (error) {
+        throw discoveryFailure(error);
+      }
       const input: unknown = JSON.parse(stdout.replace(/^\uFEFF/, ""));
       const metadata = sourceSchema.parse(input);
       if (!path.isAbsolute(metadata.config) || metadata.config.startsWith("\\\\"))
@@ -288,15 +307,18 @@ export class ForcedProxy {
         }
       }
       throw new Error("No standard local proxy inbound");
-    } catch {
+    } catch (error) {
+      if (error instanceof ProxyDiscoveryUnavailable) throw error;
       throw new Error(
         "系统未设置代理入口，且无法唯一识别 TUN 使用的受支持核心；请指定本机代理入口",
       );
     }
   }
-  readonly changed: () => void;
-  constructor(changed: () => void) {
+  private readonly changed: (reason: string, firstFailure: boolean) => void;
+  private readonly checking: () => void;
+  constructor(changed: (reason: string, firstFailure: boolean) => void, checking: () => void) {
     this.changed = changed;
+    this.checking = checking;
   }
   async source(upstream: ProxyEndpoint, mihomoGroup?: string): Promise<ProxySource> {
     if (!["127.0.0.1", "localhost", "::1"].includes(upstream.host))
@@ -306,8 +328,10 @@ export class ForcedProxy {
       this.metadataPort !== upstream.port ||
       performance.now() - this.discoveredAt > 10000
     ) {
+      this.checking();
+      let stdout: string;
       try {
-        const { stdout } = await execute(
+        ({ stdout } = await execute(
           "powershell.exe",
           ["-NoProfile", "-NonInteractive", "-Command", discovery],
           {
@@ -321,14 +345,14 @@ export class ForcedProxy {
               IPGUARD_CONTROLLER_PIPE: "",
             },
           },
-        );
-        const input: unknown = JSON.parse(stdout.replace(/^\uFEFF/, ""));
-        this.metadata = sourceSchema.parse(input);
-        this.metadataPort = upstream.port;
-        this.discoveredAt = performance.now();
+        ));
       } catch (error) {
-        throw new Error(`增强保持暂停：${proxyDiscoveryIssue(error)}`);
+        throw discoveryFailure(error);
       }
+      const input: unknown = JSON.parse(stdout.replace(/^\uFEFF/, ""));
+      this.metadata = sourceSchema.parse(input);
+      this.metadataPort = upstream.port;
+      this.discoveredAt = performance.now();
     }
     const { executable, config } = this.metadata;
     if (![executable, config].every((file) => path.isAbsolute(file) && !file.startsWith("\\\\")))
@@ -339,6 +363,7 @@ export class ForcedProxy {
     if (!file.isFile() || file.size > 1048576 || !binary.isFile())
       throw new Error("运行配置或核心文件无效");
     const stamp = `${executable}|${config}|${file.size}|${file.mtimeMs}|${binary.size}|${binary.mtimeMs}`;
+    this.sourceEntry = `${upstream.protocol}://${upstream.host}:${upstream.port}`;
     if (engine !== "mihomo" && stamp === this.sourceStamp && this.cached) return this.cached;
     let node: NodeSnapshot;
     if (engine === "mihomo") {
@@ -402,6 +427,43 @@ export class ForcedProxy {
   matches(source: ProxySource) {
     return Boolean(this.endpoint && this.activeKey === source.key);
   }
+  async canRetain(upstream: ProxyEndpoint) {
+    const child = this.child,
+      source = this.cached;
+    if (
+      !child ||
+      child.exitCode !== null ||
+      child.signalCode !== null ||
+      child.killed ||
+      !this.endpoint ||
+      !source ||
+      source.node.engine === "mihomo" ||
+      this.activeKey !== source.key ||
+      this.sourceEntry !== `${upstream.protocol}://${upstream.host}:${upstream.port}`
+    )
+      return false;
+    try {
+      const [file, binary] = await Promise.all([stat(source.config), stat(source.executable)]);
+      if (
+        !file.isFile() ||
+        file.size > 1048576 ||
+        !binary.isFile() ||
+        this.activeStamp !==
+          `${source.executable}|${source.config}|${file.size}|${file.mtimeMs}|${binary.size}|${binary.mtimeMs}`
+      )
+        return false;
+      const text = await readFile(source.config, "utf8");
+      if (Buffer.byteLength(text, "utf8") > 1048576) return false;
+      const node = automaticNode(JSON.parse(text), source.node.engine);
+      return (
+        this.child === child &&
+        Boolean(this.endpoint) &&
+        JSON.stringify(node) === JSON.stringify(source.node)
+      );
+    } catch {
+      return false;
+    }
+  }
   async start(source: ProxySource) {
     if (this.matches(source)) return;
     await this.stop();
@@ -432,18 +494,33 @@ export class ForcedProxy {
         stdio: ["pipe", "ignore", "ignore"],
       });
       this.child = child;
-      const failed = () => {
+      let reported = false;
+      const failed = (reason: string) => {
         if (this.child === child) {
+          const firstFailure = !reported;
           this.endpoint = undefined;
           this.activeKey = "";
-          this.changed();
+          reported = true;
+          this.changed(reason, firstFailure);
         }
       };
-      child.on("error", failed);
-      child.on("exit", failed);
-      child.stdin?.on("error", failed);
+      child.once("error", (error: NodeJS.ErrnoException) =>
+        failed(`专用核心启动失败（${error.code ?? "unknown"}）`),
+      );
+      child.once("exit", (code, signal) =>
+        failed(
+          `专用核心退出（exit=${code === null ? "null" : `0x${(code >>> 0).toString(16).toUpperCase()}`}，signal=${signal ?? "none"}）`,
+        ),
+      );
+      child.stdin?.once("error", (error: NodeJS.ErrnoException) =>
+        failed(`专用核心输入通道中断（${error.code ?? "unknown"}）`),
+      );
       child.stdin?.write(`${JSON.stringify(coreConfiguration(source.node, port))}\n`);
-      for (let attempt = 0; attempt < 50 && child.exitCode === null && !child.killed; attempt++) {
+      for (
+        let attempt = 0;
+        attempt < 50 && child.exitCode === null && !child.killed && !reported;
+        attempt++
+      ) {
         const listening = await new Promise<boolean>((resolve) => {
           const socket = createConnection({ host: "127.0.0.1", port });
           const finish = (ok: boolean) => {
@@ -483,9 +560,16 @@ export class ForcedProxy {
           } catch {
             throw new Error("Claude 专用端口的进程归属未通过校验，连接保持暂停");
           }
-          if (this.child !== child || child.exitCode !== null || child.killed)
+          if (
+            this.child !== child ||
+            child.exitCode !== null ||
+            child.signalCode !== null ||
+            child.killed ||
+            reported
+          )
             throw new Error("Claude 专用代理核心已退出");
           this.activeKey = source.key;
+          this.activeStamp = this.sourceStamp;
           this.endpoint = { protocol: "http", host: "127.0.0.1", port };
           return;
         }
@@ -500,6 +584,7 @@ export class ForcedProxy {
   async stop() {
     this.endpoint = undefined;
     this.activeKey = "";
+    this.activeStamp = "";
     const child = this.child;
     this.child = undefined;
     if (child?.pid && child.exitCode === null && child.signalCode === null) {

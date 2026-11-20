@@ -226,14 +226,16 @@ export const setupIpc = (
       await claude.useFixedProxy(proxyEnhancement.probeAddress);
       const checked = await guardian.request("check");
       if (!checked.ready) throw new Error(checked.reason || "公网 IPv4 尚未通过校验");
-      if (
-        !(await proxyEnhancement.exit.check(
-          checked.settings.expectedIps,
-          proxyEnhancement.probeAddress,
-          true,
-        ))
-      )
-        throw new Error(proxyEnhancement.exit.state.reason);
+      if (!proxyEnhancement.sourceReady)
+        throw new Error(proxyEnhancement.state.error || "等待代理来源复核");
+      const verified = await proxyEnhancement.exit.check(
+        checked.settings.expectedIps,
+        proxyEnhancement.probeAddress,
+        true,
+      );
+      if (!proxyEnhancement.sourceReady)
+        throw new Error(proxyEnhancement.state.error || "等待代理来源复核");
+      if (!verified) throw new Error(proxyEnhancement.exit.state.reason);
       return guardian.request("enhancement:state", {
         ready: true,
         reason: proxyEnhancement.exit.state.reason,

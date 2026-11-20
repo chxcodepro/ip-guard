@@ -1,94 +1,47 @@
 import type { Snapshot } from "@ip-guard/electron";
 
 export type ProtectionNotice = {
-  kind:
-    | "ip_changed"
-    | "ip_unavailable"
-    | "network_restored"
-    | "guard_offline"
-    | "enforcement_failed";
-  detail?: string;
+  kind: "paused" | "guard_offline" | "enforcement_failed" | "proxy_core_failed";
   apps: { id: string; name: string }[];
-  currentIp: string;
-  expectedIps: string[];
-  probe: Snapshot["probe"];
+  mainRunning: boolean;
 };
 export function detectProtectionEvent(
   previous: Snapshot | undefined,
   current: Snapshot,
   stopping: boolean,
 ): ProtectionNotice | undefined {
-  if (!stopping && previous && current.online && current.rulesLocked) {
-    const failed =
-      ["blocked", "failed"].includes(current.enhancementPhase) &&
-      current.enhancementPhase !== previous.enhancementPhase;
-    const resumed =
-      current.enhancementReady &&
-      !previous.enhancementReady &&
-      ["blocked", "failed"].includes(previous.enhancementPhase);
-    const apps = current.apps
-      .filter((app) => app.enhanced && current.running.includes(app.id))
-      .map(({ id, name }) => ({ id, name }));
-    if (apps.length && (failed || resumed))
-      return {
-        kind: resumed
-          ? "network_restored"
-          : current.enhancementPhase === "blocked"
-            ? "ip_changed"
-            : "ip_unavailable",
-        detail: current.enhancementReason,
-        apps,
-        currentIp: "",
-        expectedIps: current.settings.expectedIps,
-        probe: { round: 0, attempt: 0, phase: "idle" },
-      };
-  }
-  if (
-    !stopping &&
-    previous &&
-    current.commandBlockId &&
-    current.commandBlockId !== previous.commandBlockId
-  ) {
+  if (stopping || !current.rulesLocked) return;
+  if (previous && current.commandBlockId && current.commandBlockId !== previous.commandBlockId) {
     const app = current.apps.find((item) => item.id === current.commandBlockAppId);
     if (app)
       return {
         kind: "enforcement_failed",
-        detail: current.commandBlockReason,
         apps: [{ id: app.id, name: app.name }],
-        currentIp: current.currentIp,
-        expectedIps: current.settings.expectedIps,
-        probe: current.probe,
+        mainRunning: current.running.includes(app.id),
       };
   }
-  if (stopping || !previous?.running.length || !current.rulesLocked) return;
-  const stopped = !current.online || current.networkIssue === "enforcement_failed";
-  const recovered =
-    current.ready &&
-    !previous.ready &&
-    ["ip_changed", "ip_unavailable"].includes(previous.networkIssue);
-  const blocked =
-    !current.ready &&
-    ["ip_changed", "ip_unavailable"].includes(current.networkIssue) &&
-    previous.networkIssue !== current.networkIssue;
-  if (!stopped && !recovered && !blocked) return;
-  if (stopped && current.running.length) return;
-  const apps = (stopped ? previous : current).apps
-    .filter((app) => (stopped ? previous : current).running.includes(app.id))
+  if (
+    previous?.running.length &&
+    ((!current.online && previous.online) ||
+      (current.networkIssue === "enforcement_failed" &&
+        previous.networkIssue !== "enforcement_failed"))
+  )
+    return {
+      kind: current.online ? "enforcement_failed" : "guard_offline",
+      apps: previous.apps
+        .filter((app) => previous.running.includes(app.id))
+        .map(({ id, name }) => ({ id, name })),
+      mainRunning: previous.running.some((id) => current.running.includes(id)),
+    };
+  if (!current.rulesLocked || !current.online || current.networkIssue === "enforcement_failed")
+    return;
+  const apps = current.apps
+    .filter(
+      (app) =>
+        current.running.includes(app.id) &&
+        (!current.ready || (app.enhanced && !current.enhancementReady)),
+    )
     .map(({ id, name }) => ({ id, name }));
   if (!apps.length) return;
-  return {
-    kind: !current.online
-      ? "guard_offline"
-      : current.networkIssue === "enforcement_failed"
-        ? "enforcement_failed"
-        : recovered
-          ? "network_restored"
-          : current.networkIssue === "ip_changed"
-            ? "ip_changed"
-            : "ip_unavailable",
-    apps,
-    currentIp: current.online ? current.currentIp : "",
-    expectedIps: current.settings.expectedIps,
-    probe: current.probe,
-  };
+  return { kind: "paused", apps, mainRunning: true };
 }

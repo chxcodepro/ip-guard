@@ -102,7 +102,7 @@ namespace IpGuard {
             catch(ArgumentException) { return false; }
         }
         static int Execute(string[] args,bool packaged,LaunchWindow window,bool inherited,ModelEvidence modelEvidence) {
-            Win32.ProcessInfo info=new Win32.ProcessInfo(); string ip=""; string[] expected=new string[0]; bool processOwned=false;
+            Win32.ProcessInfo info=new Win32.ProcessInfo(); string ip=""; string[] expected=new string[0]; bool processOwned=false,launched=false;
             try {
                 if(args.Length<(packaged ? 6 : 4)) throw new Exception("启动参数无效。");
                 string sid=packaged ? SystemPolicy.Sid : args[1], id=packaged ? args[1] : args[2]; Guid parsed;
@@ -166,9 +166,10 @@ namespace IpGuard {
                                 if(window!=null ? !window.WaitForRelease(lease.Alive) : !lease.Alive()) throw new Exception("启动许可已撤销，程序保持停止。");
                                 TerminalProcess.MarkStarted();
                                 if(Win32.ResumeThread(info.thread)==UInt32.MaxValue) throw new Exception("恢复目标进程失败。");
+                                launched=true;
                                 try {MonitorProcess(info,lease,result.commandProtection);}
                                 catch(Exception error) {
-                                    if(result.commandProtection) try {writer.WriteLine(Data.Json().Serialize(new {type="command-blocked",error=error.GetBaseException().Message}));} catch(IOException) {}
+                                    try {writer.WriteLine(Data.Json().Serialize(new {type="command-blocked",error=error.GetBaseException().Message}));} catch(IOException) {}
                                     throw;
                                 }
                                 uint exitCode; Win32.Check(Win32.GetExitCodeProcess(info.process,out exitCode)); return exitCode==259 ? 1 : unchecked((int)exitCode);
@@ -177,7 +178,7 @@ namespace IpGuard {
                         }
                     } finally { if(window!=null) window.CancelRequested-=cancel; else TerminalProcess.UnbindCancel(); }
                 }
-            } catch(Exception error) { if(window!=null) window.Block(error.GetBaseException().Message,ip,expected,error.GetBaseException() is FirewallDisabledException); else Console.Error.WriteLine("IP Guard · "+error.GetBaseException().Message); return 1; }
+            } catch(Exception error) { if(window!=null && !launched) window.Block(error.GetBaseException().Message,ip,expected,error.GetBaseException() is FirewallDisabledException); else Console.Error.WriteLine("IP Guard · "+error.GetBaseException().Message); return 1; }
             finally {
                 if(processOwned) { Win32.TerminateProcess(info.process,1); Win32.CloseHandle(info.thread); Win32.CloseHandle(info.process); }
                 if(window!=null) window.End();

@@ -33,6 +33,7 @@ export class EnhancementExit {
   private key = "";
   private completedAt = 0;
   private stopped = false;
+  private expiry: ReturnType<typeof setTimeout> | undefined;
   private readonly changed: () => void;
   constructor(changed: () => void) {
     this.changed = changed;
@@ -41,15 +42,30 @@ export class EnhancementExit {
     return this.state.phase === "passed" && Date.now() - Date.parse(this.state.checkedAt) < 15000;
   }
   private set(state: EnhancementVerification) {
+    clearTimeout(this.expiry);
+    this.expiry = undefined;
     this.state = state;
+    if (state.phase === "passed") {
+      this.expiry = setTimeout(() => {
+        if (this.state !== state || this.stopped) return;
+        this.set({ ...state, phase: "failed", reason: "增强出口验证已过期，联网已暂停" });
+      }, 15000);
+      this.expiry.unref();
+    }
     this.changed();
   }
-  invalidate(reason = "网络或代理已变化，等待增强出口复核") {
+  suspend() {
+    // Source discovery uncertainty must not renew or erase the existing proof's deadline.
     this.generation++;
     this.abort.abort();
     this.abort = new AbortController();
-    this.key = "";
     this.completedAt = 0;
+  }
+  invalidate(reason = "网络或代理已变化，等待增强出口复核") {
+    this.suspend();
+    this.key = "";
+    clearTimeout(this.expiry);
+    this.expiry = undefined;
     if (this.state.phase !== "idle" || this.state.reason !== reason)
       this.set({ phase: "idle", checkedAt: "", currentIp: "", reason });
   }

@@ -323,13 +323,23 @@ namespace IpGuard {
             lock(actions) {
                 if(action == "status") return Snapshot();
                 if(action == "check") { Check(); return Snapshot(); }
+                if(action=="proxy:diagnostic") {
+                    object level,message;
+                    if(!input.TryGetValue("level",out level) || !(level is string) || !new[] {"info","warning"}.Contains((string)level) ||
+                       !input.TryGetValue("message",out message) || !(message is string) || ((string)message).Length==0 || ((string)message).Length>512 ||
+                       ((string)message).Any(Char.IsControl)) throw new Exception("代理诊断格式无效。");
+                    Log((string)level,(string)message);return Snapshot();
+                }
                 if(action=="enhancement:state") {
                     object ready,detail,phase;
                     if(!input.TryGetValue("ready",out ready) || !(ready is bool) ||
                        !input.TryGetValue("reason",out detail) || !(detail is string) || ((string)detail).Length>1024 ||
                        !input.TryGetValue("phase",out phase) || !(phase is string) || !new[] {"idle","checking","passed","blocked","failed"}.Contains((string)phase) ||
                        ((bool)ready && (string)phase!="passed")) throw new Exception("增强出口状态格式无效。");
-                    lock(state) {enhancementReady=(bool)ready;enhancementReason=(string)detail;enhancementPhase=(string)phase;
+                    lock(state) {
+                        bool wasReady=enhancementReady;
+                        enhancementReady=(bool)ready;enhancementReason=(string)detail;enhancementPhase=(string)phase;
+                        if(wasReady!=enhancementReady) Log(enhancementReady ? "info" : "warning",(enhancementReady ? "增强联网已恢复 · " : "增强联网已暂停 · ")+enhancementReason);
                         if(config.commandProtection) commandGuard.Allow(healthy && enhancementReady);}
                     return Snapshot();
                 }
@@ -587,7 +597,7 @@ namespace IpGuard {
             }
         }
         void GateSession(NamedPipeServerStream pipe) {
-            Session session = null; Target target = null;
+            Session session = null; Target target = null; string runtimeFailure=null;
             try {
             using(pipe) using(StreamReader reader = new StreamReader(pipe,new UTF8Encoding(false),false,1024,true)) using(StreamWriter writer = new PipeWriter(pipe)) {
                 try {
@@ -668,9 +678,9 @@ namespace IpGuard {
                     }
                     if(alive.Wait(1000) && alive.Result!=null && alive.Result.Length<4096 && alive.Result.StartsWith("{",StringComparison.Ordinal)) {
                         var blocked=Data.Json().Deserialize<Dictionary<string,object>>(alive.Result);
-                        if(blocked.ContainsKey("type") && blocked["type"] as string=="command-blocked") {
-                            lock(state) {commandBlockId=Guid.NewGuid().ToString("D");commandBlockAppId=target==null ? "" : target.id;commandBlockReason=blocked["error"] as string ?? "子进程启动被阻断。";}
-                            Log("warning",commandBlockReason);Publish();
+                        if(!quit && session!=null && !session.stopped && session.epoch==Volatile.Read(ref epoch) &&
+                           blocked.ContainsKey("type") && blocked["type"] as string=="command-blocked") {
+                            runtimeFailure=blocked["error"] as string ?? "受控会话监护失败。";
                         }
                     }
                 } catch(Exception e) {
@@ -678,6 +688,10 @@ namespace IpGuard {
                     try { writer.WriteLine(Data.Json().Serialize(new { allow=false, currentIp=currentIp, expectedIps=config.settings.expectedIps, error=e.GetBaseException().Message, code=e.GetBaseException() is FirewallDisabledException ? FirewallDisabledException.Code : "" })); } catch(IOException) { }
                 } finally {
                     if(session != null) lock(state) { session.stopped=true; Win32.TerminateJobObject(session.job,1); if(session.enhanced && !session.otherModel) {try {commandGuard.Unregister(session.name);} catch(Exception error) {Log("warning",error.Message);}} Win32.CloseHandle(session.job); sessions.Remove(session); pendingBlock=true; }
+                    if(runtimeFailure!=null) lock(state) {
+                        commandBlockId=Guid.NewGuid().ToString("D");commandBlockAppId=target==null ? "" : target.id;commandBlockReason=runtimeFailure;
+                        Log("warning",runtimeFailure);
+                    }
                     Publish();
                 }
             }

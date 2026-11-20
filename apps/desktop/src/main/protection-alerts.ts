@@ -1,180 +1,136 @@
-import { spawn } from "node:child_process";
-import type { ChildProcess } from "node:child_process";
-import { createInterface } from "node:readline";
+import { Notification } from "electron";
 
-import { dialog } from "electron";
-
-import { ipv4Attempts } from "@ip-guard/electron";
 import type { Snapshot } from "@ip-guard/electron";
 
-import { nativePath } from "#src/main/guardian.ts";
 import type { Guardian } from "#src/main/guardian.ts";
 import { detectProtectionEvent } from "#src/main/protection-event.ts";
 import type { ProtectionNotice } from "#src/main/protection-event.ts";
 
-function isIpPause(notice: ProtectionNotice) {
-  return notice.kind === "ip_changed" || notice.kind === "ip_unavailable";
-}
-
-function sessionEnded(notice: ProtectionNotice, snapshot: Snapshot) {
-  return (
-    (isIpPause(notice) || notice.kind === "network_restored") &&
-    !notice.apps.some(({ id }) => snapshot.running.includes(id))
-  );
-}
-
 export class ProtectionAlerts {
   private previous: Snapshot | undefined;
-  private viewer: { child: ChildProcess; notice: ProtectionNotice } | undefined;
-  private stopped = false;
-  private fallbackOpen: { notice: ProtectionNotice; controller: AbortController } | undefined;
-  private fallbackFor: ProtectionNotice | undefined;
-  private openMain: () => void;
-  constructor(guardian: Guardian, openMain: () => void) {
-    this.openMain = openMain;
-    guardian.on("snapshot", (current: Snapshot) => {
-      const previous = this.previous;
-      this.previous = current;
-      if (this.stopped) return;
-      if (this.viewer && sessionEnded(this.viewer.notice, current)) this.closeViewer();
-      if (this.fallbackOpen && sessionEnded(this.fallbackOpen.notice, current))
-        this.fallbackOpen.controller.abort();
-      const notice = detectProtectionEvent(previous, current, guardian.isStopping);
-      if (notice) this.show(notice);
-      else {
-        const viewer = this.viewer;
-        if (
-          viewer &&
-          viewer.notice.probe.round === 0 &&
-          isIpPause(viewer.notice) &&
-          current.online &&
-          current.ready &&
-          !current.enhancementReady &&
-          current.apps.some((app) => app.enhanced && current.running.includes(app.id))
-        ) {
-          if (viewer.notice.detail !== current.enhancementReason) {
-            viewer.notice = { ...viewer.notice, detail: current.enhancementReason };
-            this.writeNotice(true);
-          }
-          return;
-        }
-        if (
-          !viewer ||
-          viewer.child.exitCode !== null ||
-          !viewer.child.stdin?.writable ||
-          !isIpPause(viewer.notice) ||
-          !current.online ||
-          !current.rulesLocked ||
-          current.ready ||
-          !current.running.length
-        )
-          return;
-        const before = viewer.notice.probe;
-        if (
-          before.round === current.probe.round &&
-          before.attempt === current.probe.attempt &&
-          before.phase === current.probe.phase
-        )
-          return;
-        viewer.notice = {
-          ...viewer.notice,
-          probe: current.probe,
-          currentIp: current.currentIp,
-          expectedIps: current.settings.expectedIps,
-        };
-        this.writeNotice(true);
+  private pause:
+    | {
+        notice: ProtectionNotice;
+        timer?: ReturnType<typeof setTimeout>;
+        notification?: Notification;
       }
-    });
+    | undefined;
+  private critical: Notification | undefined;
+  private criticalKind: ProtectionNotice["kind"] | undefined;
+  private proxyCoreFailureNotified = false;
+  private stopped = false;
+  private readonly guardian: Guardian;
+  private readonly openMain: () => void;
+  constructor(guardian: Guardian, openMain: () => void) {
+    this.guardian = guardian;
+    this.openMain = openMain;
+    guardian.on("snapshot", this.observe);
   }
-  private show(notice: ProtectionNotice) {
-    let viewer = this.viewer;
-    if (!viewer || viewer.child.exitCode !== null || !viewer.child.stdin?.writable) {
-      const child = spawn(nativePath(), ["notice"], {
-        windowsHide: true,
-        stdio: ["pipe", "pipe", "pipe"],
-      });
-      viewer = { child, notice };
-      this.viewer = viewer;
-      const owned = viewer;
-      if (child.stdout)
-        createInterface({ input: child.stdout }).on("line", (line) => {
-          if (this.viewer === owned && line === "open") this.openMain();
-        });
-      child.stderr?.setEncoding("utf8");
-      child.stderr?.on("data", (message: string) =>
-        console.error("防护提醒", message.slice(0, 500)),
-      );
-      child.stdin?.on("error", (error) => console.error("防护提醒通道", error.message));
-      child.on("error", (error) => {
-        if (this.viewer !== owned) return;
-        this.viewer = undefined;
-        console.error("防护提醒启动失败", error);
-        void this.fallback(owned.notice);
-      });
-      child.on("exit", (code) => {
-        if (this.viewer !== owned) return;
-        this.viewer = undefined;
-        if (code !== 0) void this.fallback(owned.notice);
-      });
-    }
-    viewer.notice = notice;
-    this.writeNotice(false);
-  }
-  private writeNotice(updateOnly: boolean) {
-    const viewer = this.viewer;
-    if (!viewer) return;
-    const notice = {
-      ...viewer.notice,
-      apps: [...new Set(viewer.notice.apps.map(({ name }) => name))],
-      updateOnly,
-    };
-    viewer.child.stdin?.write(`${JSON.stringify(notice)}\n`, (error) => {
-      if (error && !updateOnly && this.viewer === viewer) void this.fallback(viewer.notice);
-    });
-  }
-  private closeViewer() {
-    const viewer = this.viewer;
-    this.viewer = undefined;
-    viewer?.child.stdin?.end();
-  }
-  private async fallback(notice: ProtectionNotice) {
-    if (
-      this.stopped ||
-      this.fallbackOpen ||
-      this.fallbackFor === notice ||
-      (this.previous && sessionEnded(notice, this.previous))
-    )
+  private readonly observe = (current: Snapshot) => {
+    const notice = detectProtectionEvent(this.previous, current, this.guardian.isStopping);
+    this.previous = current;
+    if (this.stopped) return;
+    if (!notice) {
+      this.clearPause();
+      if (this.guardian.isStopping || !current.rulesLocked) {
+        this.critical?.close();
+        this.critical = undefined;
+      }
       return;
-    const controller = new AbortController();
-    const names = [...new Set(notice.apps.map(({ name }) => name))].join("、");
-    this.fallbackFor = notice;
-    this.fallbackOpen = { notice, controller };
-    try {
-      const result = await dialog.showMessageBox({
-        type: notice.kind === "network_restored" ? "info" : "warning",
-        title: "IP Guard · 防护提醒",
-        message:
-          notice.kind === "network_restored"
-            ? "受保护程序已恢复联网"
-            : ["guard_offline", "enforcement_failed"].includes(notice.kind)
-              ? "受保护程序已停止"
-              : "已暂停联网，程序保持运行",
-        detail: notice.detail
-          ? `${names}\n${notice.detail}`
-          : `${names}\n${notice.probe.round ? `第 ${notice.probe.round} 轮 · ${notice.probe.attempt}/${ipv4Attempts} 次\n` : ""}${notice.kind === "network_restored" ? "IPv4 已命中允许列表。未完成的请求请重新发送。" : ["guard_offline", "enforcement_failed"].includes(notice.kind) ? "请先恢复 IP Guard 防护，再手动重新启动程序。" : "恢复允许的网络后自动恢复联网。"}`,
-        signal: controller.signal,
-        buttons: ["知道了", "打开 IP Guard"],
-        defaultId: 0,
-        cancelId: 0,
-      });
-      if (!controller.signal.aborted && result.response === 1) this.openMain();
-    } finally {
-      this.fallbackOpen = undefined;
     }
+    if (notice.kind !== "paused") {
+      const pause = this.pause;
+      this.pause = undefined;
+      clearTimeout(pause?.timer);
+      pause?.notification?.close();
+      this.critical?.close();
+      this.critical = this.show(notice);
+      this.criticalKind = notice.kind;
+      return;
+    }
+    if (this.pause?.notice.apps.some(({ id }) => notice.apps.some((app) => app.id === id))) {
+      this.pause.notice = notice;
+      return;
+    }
+    this.clearPause();
+    const pause: NonNullable<ProtectionAlerts["pause"]> = { notice };
+    this.pause = pause;
+    pause.timer = setTimeout(() => {
+      pause.timer = undefined;
+      if (!this.stopped && !this.proxyCoreFailureNotified && this.pause === pause)
+        pause.notification = this.show(pause.notice);
+    }, 30000);
+    pause.timer.unref();
+  };
+  private show(notice: ProtectionNotice): Notification | undefined {
+    if (!Notification.isSupported()) {
+      console.warn("系统通知不可用，防护状态请查看 IP Guard 托盘与日志");
+      return;
+    }
+    const names = [...new Set(notice.apps.map(({ name }) => name))].join("、");
+    const title =
+      notice.kind === "paused"
+        ? "联网仍暂停，正在自动重试"
+        : notice.kind === "proxy_core_failed"
+          ? "专用代理通道发生故障"
+          : notice.kind === "guard_offline"
+            ? "守护连接已中断"
+            : "连接防护发生故障";
+    const status =
+      notice.kind === "paused"
+        ? "程序保持运行，校验通过后自动恢复联网。"
+        : notice.kind === "proxy_core_failed"
+          ? "增强联网已暂停，程序保持运行。恢复通道后自动复核。"
+          : notice.kind === "guard_offline"
+            ? "受控会话许可已撤销，请恢复防护后重新启动。"
+            : notice.mainRunning
+              ? "主程序仍在运行，相关连接或子进程已阻断。"
+              : "受影响的受控会话已停止，请恢复防护后重新启动。";
+    const notification = new Notification({
+      title: `IP Guard · ${title}`,
+      body: `${names}\n${status}点击查看。`,
+      silent: true,
+    });
+    notification.on("click", () => {
+      if (!this.stopped) this.openMain();
+    });
+    notification.on("failed", (_event, error) => console.error("防护系统通知发送失败", error));
+    notification.show();
+    return notification;
+  }
+  notifyProxyCoreFailure() {
+    if (this.stopped || this.proxyCoreFailureNotified) return;
+    const snapshot = this.guardian.snapshot;
+    if (!snapshot?.online || !snapshot.rulesLocked) return;
+    const apps = snapshot.apps
+      .filter((app) => app.enhanced && snapshot.running.includes(app.id))
+      .map(({ id, name }) => ({ id, name }));
+    if (!apps.length) return;
+    this.proxyCoreFailureNotified = true;
+    this.clearPause();
+    this.critical?.close();
+    this.critical = this.show({ kind: "proxy_core_failed", apps, mainRunning: true });
+    this.criticalKind = "proxy_core_failed";
+  }
+  resetProxyCoreFailure() {
+    this.proxyCoreFailureNotified = false;
+    if (this.criticalKind === "proxy_core_failed") {
+      this.critical?.close();
+      this.critical = undefined;
+      this.criticalKind = undefined;
+    }
+  }
+  private clearPause() {
+    const pause = this.pause;
+    this.pause = undefined;
+    clearTimeout(pause?.timer);
+    pause?.notification?.close();
   }
   stop() {
     this.stopped = true;
-    this.closeViewer();
-    this.fallbackOpen?.controller.abort();
+    this.guardian.off("snapshot", this.observe);
+    this.clearPause();
+    this.critical?.close();
+    this.critical = undefined;
   }
 }

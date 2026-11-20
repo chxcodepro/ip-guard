@@ -10,7 +10,7 @@ import { claudeIpv4Endpoint, egressPolicySchema, proxySettingsSchema } from "@ip
 import type { EgressPolicy, ProxySettings, ProxyEnhancementState } from "@ip-guard/electron";
 
 import { EnhancementExit } from "./enhancement-exit.ts";
-import { ForcedProxy } from "./forced-proxy.ts";
+import { ForcedProxy, ProxyDiscoveryUnavailable } from "./forced-proxy.ts";
 import { guardDataDirectory } from "./guard-data.ts";
 import { acceptHttpProxy } from "./http-proxy.ts";
 import type { NetworkPolicies } from "./network-policies.ts";
@@ -33,6 +33,7 @@ export class ProxyEnhancement {
   get forwardingAllowed() {
     return (
       this.allowed &&
+      this.exit.ready &&
       !this.networkPolicies.error &&
       !this.networkPolicies.applying &&
       this.networkPolicies.confirmed
@@ -59,6 +60,17 @@ export class ProxyEnhancement {
   }
   onChange: (() => void) | undefined;
   onVerificationChange: (() => void) | undefined;
+  onDiagnostic: ((level: "info" | "warning", message: string) => void) | undefined;
+  private diagnosticState = "";
+  private report(level: "info" | "warning", message: string) {
+    if (message === this.diagnosticState) return;
+    this.diagnosticState = message;
+    this.onDiagnostic?.(level, message);
+  }
+  private sourceConfirmed = false;
+  get sourceReady() {
+    return this.sourceConfirmed;
+  }
   readonly exit = new EnhancementExit(() => {
     if (!this.exit.ready) this.setAllowed(false);
     this.onVerificationChange?.();
@@ -88,15 +100,22 @@ export class ProxyEnhancement {
   private holds = 0;
   private approved = false;
   private stopped = false;
-  private readonly forced = new ForcedProxy(() => {
-    this.disconnect();
-    this.upstream = {
-      ...this.upstream,
-      phase: "unavailable",
-      error: "Claude 专用通道已退出，增强连接保持暂停",
-    };
-    this.onChange?.();
-  });
+  private coreFailureRevision = 0;
+  private readonly forced = new ForcedProxy(
+    (reason, firstFailure) => {
+      this.sourceConfirmed = false;
+      if (firstFailure) this.coreFailureRevision++;
+      if (firstFailure) this.disconnect(true, reason);
+      this.upstream = { ...this.upstream, phase: "unavailable", error: reason };
+      this.report("warning", reason);
+      if (firstFailure) this.onChange?.();
+      else this.onVerificationChange?.();
+    },
+    () => {
+      this.sourceConfirmed = false;
+      this.exit.suspend();
+    },
+  );
   get routeActive() {
     return Boolean(this.forced.endpoint);
   }
@@ -122,7 +141,8 @@ export class ProxyEnhancement {
     try {
       await this.refresh();
       if (!this.routeActive && this.upstream.phase === "ready") await this.refresh();
-      if (!this.routeActive) throw new Error(this.upstream.error || "Claude 专用通道未就绪");
+      if (!this.routeActive || !this.sourceReady)
+        throw new Error(this.upstream.error || "Claude 专用通道未就绪");
       return async () => {
         this.holds--;
         await this.refresh();
@@ -196,15 +216,22 @@ export class ProxyEnhancement {
     return work;
   }
   private async refreshCore() {
-    const previous = `${this.upstream.phase}|${this.upstream.endpoint}|${this.upstream.error}`;
+    const previous = `${this.upstream.phase}|${this.upstream.endpoint}`;
+    const previousError = this.upstream.error;
+    const sourceWasReady = this.sourceConfirmed;
+    const coreFailureBefore = this.coreFailureRevision;
+    let revision = this.revision;
+    let entry: ProxyEndpoint | undefined;
     try {
       await this.resolver().forceReloadProxyConfig();
       if (!this.needed && !this.holds) {
         if (this.forced.allocated) {
           this.disconnect();
+          revision = this.revision;
           await this.forced.stop();
         }
         this.approved = false;
+        this.sourceConfirmed = false;
         this.forced.forget();
         const entry = await this.sourceEndpoint();
         if (!["127.0.0.1", "localhost", "::1"].includes(entry.host))
@@ -218,19 +245,21 @@ export class ProxyEnhancement {
         return;
       }
       if (!this.approved) throw new Error("请确认启用 Claude 专用路由；现有增强连接保持暂停");
-      const source = await this.forced.source(
-        await this.sourceEndpoint(),
-        this.upstream.settings.mihomoGroup,
-      );
+      entry = await this.sourceEndpoint();
+      const source = await this.forced.source(entry, this.upstream.settings.mihomoGroup);
+      if (this.stopped || revision !== this.revision) return;
       this.reservePorts();
       if (this.networkPolicies.error) throw new Error(this.networkPolicies.error);
       if (!this.forced.matches(source)) {
         this.disconnect();
+        revision = this.revision;
         await this.forced.start(source);
       }
       const endpoint = this.forced.endpoint;
+      if (this.stopped || revision !== this.revision) return;
       this.reservePorts();
       if (this.networkPolicies.error) throw new Error(this.networkPolicies.error);
+      this.sourceConfirmed = true;
       this.upstream = {
         ...this.upstream,
         phase: "ready",
@@ -239,23 +268,43 @@ export class ProxyEnhancement {
           : `${source.node.engine} · 已识别当前节点，待开启增强`,
         error: "",
       };
+      if (this.diagnosticState) this.report("info", "代理来源复核通过，专用通道已就绪");
     } catch (error) {
-      this.disconnect();
-      try {
-        await this.forced.stop();
-      } catch (cleanupError) {
-        console.error("专用通道清理未完成", cleanupError);
+      if (this.stopped || revision !== this.revision) return;
+      this.sourceConfirmed = false;
+      if (error instanceof ProxyDiscoveryUnavailable) entry ??= error.entry;
+      const retained =
+        error instanceof ProxyDiscoveryUnavailable &&
+        entry &&
+        !this.networkPolicies.error &&
+        (await this.forced.canRetain(entry));
+      if (this.stopped || revision !== this.revision) return;
+      if (retained) {
+        this.exit.suspend();
+        if (!this.exit.ready) this.setAllowed(false);
+        this.upstream = { ...this.upstream, error: error.message };
+        this.report("warning", `${error.message}；保留自有专用核心，出口许可沿用原截止时间`);
+      } else {
+        this.disconnect();
+        try {
+          await this.forced.stop();
+        } catch (cleanupError) {
+          console.error("专用通道清理未完成", cleanupError);
+        }
+        this.upstream = {
+          ...this.upstream,
+          phase: "unavailable",
+          endpoint: "",
+          error: error instanceof Error ? error.message : "当前代理不可用",
+        };
+        this.report("warning", "代理来源或配置校验失败，专用通道已暂停");
       }
-      this.upstream = {
-        ...this.upstream,
-        phase: "unavailable",
-        endpoint: "",
-        error: error instanceof Error ? error.message : "当前代理不可用",
-      };
     } finally {
       this.reservePorts();
-      if (previous !== `${this.upstream.phase}|${this.upstream.endpoint}|${this.upstream.error}`)
-        this.onChange?.();
+      if (previous !== `${this.upstream.phase}|${this.upstream.endpoint}`) {
+        if (coreFailureBefore === this.coreFailureRevision) this.onChange?.();
+      } else if (previousError !== this.upstream.error || sourceWasReady !== this.sourceConfirmed)
+        this.onVerificationChange?.();
     }
   }
   async configure(settings: ProxySettings) {
@@ -267,7 +316,9 @@ export class ProxyEnhancement {
     this.configurationError = "";
     this.disconnect();
     this.upstream = { settings: next, phase: "idle", endpoint: "", error: "" };
+    const refreshing = this.refreshing;
     await this.refresh();
+    if (refreshing) await this.refresh();
   }
   private async listen(gated: boolean): Promise<number> {
     const server = createServer((socket) => this.accept(socket, gated));
@@ -316,12 +367,12 @@ export class ProxyEnhancement {
       this.exit.ready;
     if (!this.allowed) this.disconnect(false);
   }
-  private disconnect(all = true) {
+  private disconnect(all = true, reason?: string) {
     // Probe retries may continue while managed connections remain paused.
     if (all) {
       this.revision++;
       this.allowed = false;
-      this.exit.invalidate();
+      this.exit.invalidate(reason);
     }
     for (const socket of all ? this.sockets : this.managedSockets) socket.destroy();
     if (all) this.sockets.clear();

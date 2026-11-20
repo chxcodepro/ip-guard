@@ -1,8 +1,5 @@
-import { ChildProcess, spawn } from "node:child_process";
-import { PassThrough } from "node:stream";
-
-import type { MessageBoxOptions, MessageBoxReturnValue } from "electron";
-import { describe, expect, it, vi } from "vite-plus/test";
+import type { NotificationConstructorOptions } from "electron";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import {
   nativeVersion,
@@ -17,15 +14,36 @@ import { Guardian } from "./guardian.ts";
 import { ProtectionAlerts } from "./protection-alerts.ts";
 import { detectProtectionEvent } from "./protection-event.ts";
 
-// The external window processes are replaced; snapshots and notice dispatch use the real code.
-vi.mock("node:child_process", async (original) => ({
-  ...(await original<typeof import("node:child_process")>()),
-  spawn: vi.fn(),
-}));
-const showMessageBox = vi.hoisted(() =>
-  vi.fn<(_options: MessageBoxOptions) => Promise<MessageBoxReturnValue>>(),
-);
-vi.mock("electron", () => ({ app: { isPackaged: false }, dialog: { showMessageBox } }));
+type SystemNotice = {
+  options: NotificationConstructorOptions;
+  show: ReturnType<typeof vi.fn>;
+  close: ReturnType<typeof vi.fn>;
+  emit: (event: string) => boolean;
+};
+const notifications = vi.hoisted(() => {
+  const items: SystemNotice[] = [];
+  return { supported: true, items };
+});
+// Electron and the OS notification center are external; event detection and episode timing are real.
+vi.mock("electron", async () => {
+  const { EventEmitter } = await import("node:events");
+  return {
+    app: { isPackaged: false },
+    Notification: class extends EventEmitter {
+      static isSupported() {
+        return notifications.supported;
+      }
+      options: NotificationConstructorOptions;
+      show = vi.fn();
+      close = vi.fn();
+      constructor(options: NotificationConstructorOptions) {
+        super();
+        this.options = options;
+        notifications.items.push(this);
+      }
+    },
+  };
+});
 
 const running: Snapshot = {
   networkPolicy: {
@@ -78,171 +96,151 @@ const running: Snapshot = {
     },
   ],
 };
-describe("network-only protection notices", () => {
-  it("reports split egress only for enhanced sessions and keeps basic programs running", () => {
-    const enhanced: Snapshot = {
-      ...running,
-      enhancementReady: true,
-      enhancementPhase: "passed",
-      apps: running.apps.map((app) => ({ ...app, enhanced: true })),
-    };
-    const blocked: Snapshot = {
-      ...enhanced,
-      enhancementReady: false,
-      enhancementPhase: "blocked",
-      enhancementReason: "国内查询出口未命中允许列表",
-    };
-    expect(detectProtectionEvent(enhanced, blocked, false)).toMatchObject({
-      kind: "ip_changed",
-      apps: [{ id: running.running[0], name: "Claude" }],
-      detail: "国内查询出口未命中允许列表",
-    });
-    expect(blocked.ready).toBe(true);
-    expect(blocked.running).toEqual(enhanced.running);
-    expect(detectProtectionEvent(blocked, enhanced, false)?.kind).toBe("network_restored");
-    expect(
-      detectProtectionEvent(enhanced, { ...blocked, apps: running.apps }, false),
-    ).toBeUndefined();
+const paused: Snapshot = { ...running, ready: false, networkIssue: "ip_changed" };
+const enhanced = (snapshot: Snapshot): Snapshot => ({
+  ...snapshot,
+  apps: snapshot.apps.map((app) => ({ ...app, enhanced: true })),
+});
+describe("quiet runtime protection alerts", () => {
+  let guardian: Guardian;
+  let alerts: ProtectionAlerts;
+  const openMain = vi.fn();
+  beforeEach(() => {
+    vi.useFakeTimers();
+    notifications.supported = true;
+    notifications.items.length = 0;
+    guardian = new Guardian(new ClaudeIPv4());
+    alerts = new ProtectionAlerts(guardian, openMain);
+    guardian.emit("snapshot", running);
   });
-  it("reports a metadata-blocked child without claiming unrelated apps stopped", () => {
-    const blocked = {
-      ...running,
-      commandBlockId: "first",
-      commandBlockAppId: "2357f08c-f69f-4924-8fa0-8bf043019fd8",
-      commandBlockReason: "子进程缺少可核验元数据",
-    };
-    expect(detectProtectionEvent(running, blocked, false)).toMatchObject({
-      kind: "enforcement_failed",
-      apps: [{ id: running.running[0], name: "Claude" }],
-      detail: "子进程缺少可核验元数据",
-    });
-    expect(detectProtectionEvent(blocked, { ...blocked }, false)).toBeUndefined();
+  afterEach(() => {
+    alerts.stop();
+    vi.useRealTimers();
+    vi.clearAllMocks();
   });
-  const paused: Snapshot = {
-    ...running,
-    ready: false,
-    networkIssue: "ip_changed",
-    currentIp: "1.1.1.1",
-  };
-  it("closes the IP mismatch window when the affected Claude session exits", () => {
-    const child = Object.assign(new ChildProcess(), { stdin: new PassThrough() });
-    vi.mocked(spawn).mockReturnValueOnce(child);
-    const guardian = new Guardian(new ClaudeIPv4());
-    const alerts = new ProtectionAlerts(guardian, () => {});
-    const idle: Snapshot = { ...running, running: [] };
-    const blockedIdle: Snapshot = { ...paused, running: [] };
-    try {
-      guardian.emit("snapshot", idle);
-      guardian.emit("snapshot", blockedIdle);
-      expect(spawn).not.toHaveBeenCalled();
-      guardian.emit("snapshot", running);
-      guardian.emit("snapshot", paused);
-      expect(spawn).toHaveBeenCalledTimes(1);
-      const [claude] = running.apps;
-      if (!claude) throw new Error("Missing Claude fixture");
-      const other = { ...claude, id: "65fcc04c-f638-48a2-8daf-5e5129baecb6" };
-      guardian.emit("snapshot", {
-        ...blockedIdle,
-        apps: [...paused.apps, other],
-        running: [other.id],
-      });
-      expect(child.stdin.writableEnded).toBe(true);
-      child.emit("exit", 1);
-      expect(showMessageBox).not.toHaveBeenCalled();
-      guardian.emit("snapshot", idle);
-      guardian.emit("snapshot", blockedIdle);
-      expect(spawn).toHaveBeenCalledTimes(1);
-    } finally {
-      alerts.stop();
-      vi.clearAllMocks();
-    }
+  it("keeps a transient pause and its recovery silent, including basic sessions", () => {
+    guardian.emit("snapshot", paused);
+    vi.advanceTimersByTime(29999);
+    guardian.emit("snapshot", running);
+    vi.advanceTimersByTime(60000);
+    expect(notifications.items).toHaveLength(0);
+    expect(openMain).not.toHaveBeenCalled();
   });
-  it("dismisses a fallback IP warning once Claude exits", async () => {
-    const child = Object.assign(new ChildProcess(), { stdin: new PassThrough() });
-    vi.mocked(spawn).mockReturnValueOnce(child);
-    const fallback = Promise.withResolvers<MessageBoxReturnValue>();
-    showMessageBox.mockReturnValueOnce(fallback.promise);
-    const guardian = new Guardian(new ClaudeIPv4());
-    const openMain = vi.fn();
-    const alerts = new ProtectionAlerts(guardian, openMain);
-    try {
-      guardian.emit("snapshot", running);
-      guardian.emit("snapshot", paused);
-      child.emit("exit", 1);
-      expect(showMessageBox).toHaveBeenCalledTimes(1);
-      const signal = showMessageBox.mock.calls[0]?.[0].signal;
-      expect(signal?.aborted).toBe(false);
-      guardian.emit("snapshot", { ...paused, running: [] });
-      expect(signal?.aborted).toBe(true);
-      fallback.resolve({ response: 1, checkboxChecked: false });
-      await fallback.promise;
-      expect(openMain).not.toHaveBeenCalled();
-    } finally {
-      alerts.stop();
-      vi.clearAllMocks();
-    }
-  });
-  it("reports a blocked connection while the same process remains running", () => {
-    expect(detectProtectionEvent(running, paused, false)?.kind).toBe("ip_changed");
-    expect(detectProtectionEvent(paused, { ...paused, checking: true }, false)).toBeUndefined();
-    expect(detectProtectionEvent(paused, { ...paused }, false)).toBeUndefined();
-  });
-  it("keeps transient rechecks quiet and reports recovery after a confirmed outage", () => {
-    const checking: Snapshot = {
-      ...running,
-      ready: false,
-      checking: true,
-      networkIssue: "checking",
-    };
-    expect(detectProtectionEvent(running, checking, false)).toBeUndefined();
-    expect(detectProtectionEvent(checking, running, false)).toBeUndefined();
-    expect(detectProtectionEvent(paused, running, false)?.kind).toBe("network_restored");
-  });
-  it("opens after the failed third attempt and includes the exact batch counters", () => {
-    const first: Snapshot = {
-      ...running,
-      ready: false,
-      checking: true,
-      networkIssue: "checking",
-      probe: { round: 1, attempt: 1, phase: "checking" },
-    };
-    const second: Snapshot = { ...first, probe: { round: 1, attempt: 2, phase: "checking" } };
-    const third: Snapshot = {
-      ...first,
-      checking: false,
+  it("notifies once at thirty seconds across changing reasons, phases and retry rounds", () => {
+    guardian.emit("snapshot", { ...paused, networkIssue: "checking" });
+    vi.advanceTimersByTime(20000);
+    guardian.emit("snapshot", {
+      ...paused,
       networkIssue: "ip_unavailable",
-      probe: { round: 1, attempt: 3, phase: "failed" },
-    };
-    expect(detectProtectionEvent(running, first, false)).toBeUndefined();
-    expect(detectProtectionEvent(first, second, false)).toBeUndefined();
-    expect(detectProtectionEvent(second, third, false)?.probe).toEqual({
-      round: 1,
-      attempt: 3,
-      phase: "failed",
+      probe: { round: 2, attempt: 3, phase: "failed" },
     });
-    expect(
-      detectProtectionEvent(
-        third,
-        { ...third, checking: true, probe: { round: 2, attempt: 1, phase: "checking" } },
-        false,
-      ),
-    ).toBeUndefined();
+    vi.advanceTimersByTime(9999);
+    expect(notifications.items).toHaveLength(0);
+    vi.advanceTimersByTime(1);
+    const notice = notifications.items[0];
+    if (!notice) throw new Error("Missing prolonged-outage notification");
+    expect(notice.options).toMatchObject({ silent: true });
+    expect(notice.options.body).toContain("程序保持运行");
+    expect(openMain).not.toHaveBeenCalled();
+    notice.emit("close");
+    guardian.emit("snapshot", { ...paused, networkIssue: "checking" });
+    vi.advanceTimersByTime(120000);
+    expect(notifications.items).toHaveLength(1);
+    notice.emit("click");
+    expect(openMain).toHaveBeenCalledTimes(1);
+    guardian.emit("snapshot", running);
+    expect(notice.close).toHaveBeenCalledTimes(1);
+    guardian.emit("snapshot", paused);
+    vi.advanceTimersByTime(30000);
+    expect(notifications.items).toHaveLength(2);
   });
-  it("distinguishes a guard failure and suppresses manual operations", () => {
-    expect(
-      detectProtectionEvent(running, { ...paused, online: false, running: [] }, false)?.kind,
-    ).toBe("guard_offline");
-    expect(
-      detectProtectionEvent(
-        running,
-        { ...paused, networkIssue: "enforcement_failed", running: [] },
-        false,
-      )?.kind,
-    ).toBe("enforcement_failed");
-    expect(
-      detectProtectionEvent(running, { ...paused, rulesLocked: false }, false),
-    ).toBeUndefined();
+  it("treats an enhanced-only outage as one episode while the base IPv4 remains healthy", () => {
+    guardian.emit("snapshot", enhanced({ ...running, enhancementReady: true }));
+    guardian.emit("snapshot", enhanced(running));
+    vi.advanceTimersByTime(20000);
+    guardian.emit("snapshot", enhanced({ ...running, enhancementPhase: "failed" }));
+    vi.advanceTimersByTime(10000);
+    expect(notifications.items).toHaveLength(1);
+    guardian.emit("snapshot", enhanced({ ...running, enhancementReady: true }));
+    expect(notifications.items[0]?.close).toHaveBeenCalledTimes(1);
+  });
+  it("cancels the timer when affected sessions end, even if an unrelated session remains", () => {
+    guardian.emit("snapshot", enhanced(running));
+    vi.advanceTimersByTime(29999);
+    const app = running.apps[0];
+    if (!app) throw new Error("Missing app fixture");
+    guardian.emit("snapshot", {
+      ...running,
+      apps: [...enhanced(running).apps, { ...app, id: "other" }],
+      running: ["other"],
+    });
+    vi.advanceTimersByTime(60000);
+    expect(notifications.items).toHaveLength(0);
+  });
+  it("prioritizes an immediate command failure and reports a surviving main program", () => {
+    guardian.emit("snapshot", enhanced(running));
+    const blocked = enhanced({
+      ...running,
+      commandBlockId: "event-1",
+      commandBlockAppId: running.running[0] ?? "",
+      commandBlockReason: "child metadata rejected",
+    });
+    guardian.emit("snapshot", blocked);
+    expect(notifications.items).toHaveLength(1);
+    expect(notifications.items[0]?.options.body).toContain("主程序仍在运行");
+    guardian.emit("snapshot", { ...blocked, enhancementReady: true });
+    vi.advanceTimersByTime(60000);
+    expect(notifications.items).toHaveLength(1);
+  });
+  it("notifies once for a dedicated-core exit and re-arms only after route recovery", () => {
+    guardian.snapshot = enhanced(running);
+    guardian.emit("snapshot", guardian.snapshot);
+    alerts.notifyProxyCoreFailure();
+    alerts.notifyProxyCoreFailure();
+    guardian.emit("snapshot", enhanced({ ...running, ready: false, enhancementReady: false }));
+    vi.advanceTimersByTime(30000);
+    expect(notifications.items).toHaveLength(1);
+    expect(notifications.items[0]?.options.body).toContain("增强联网已暂停");
+    alerts.resetProxyCoreFailure();
+    alerts.notifyProxyCoreFailure();
+    expect(notifications.items).toHaveLength(2);
+  });
+  it.each(["guard_offline", "enforcement_failed"] as const)(
+    "reports %s immediately once and retains the critical notification after session cleanup",
+    (kind) => {
+      const stopped: Snapshot = {
+        ...paused,
+        online: kind !== "guard_offline",
+        networkIssue: kind === "enforcement_failed" ? kind : "idle",
+        running: [],
+      };
+      guardian.emit("snapshot", stopped);
+      guardian.emit("snapshot", { ...stopped });
+      vi.advanceTimersByTime(60000);
+      expect(notifications.items).toHaveLength(1);
+      expect(notifications.items[0]?.close).not.toHaveBeenCalled();
+      expect(notifications.items[0]?.options.body).not.toContain("主程序仍在运行");
+    },
+  );
+  it("suppresses manual operations, unsupported system notifications and late callbacks on quit", () => {
     expect(detectProtectionEvent(running, paused, true)).toBeUndefined();
-    expect(detectProtectionEvent(running, { ...running, running: [] }, false)).toBeUndefined();
+    guardian.emit("snapshot", paused);
+    guardian.emit("snapshot", { ...paused, rulesLocked: false });
+    vi.advanceTimersByTime(30000);
+    expect(notifications.items).toHaveLength(0);
+    notifications.supported = false;
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    guardian.emit("snapshot", paused);
+    vi.advanceTimersByTime(30000);
+    expect(notifications.items).toHaveLength(0);
+    expect(warning).toHaveBeenCalledTimes(1);
+    warning.mockRestore();
+    notifications.supported = true;
+    guardian.emit("snapshot", running);
+    guardian.emit("snapshot", paused);
+    alerts.stop();
+    vi.advanceTimersByTime(60000);
+    expect(notifications.items).toHaveLength(0);
+    expect(guardian.listenerCount("snapshot")).toBe(0);
   });
 });

@@ -46,6 +46,10 @@ if (apiOrigin === null) {
 }
 
 const claude = new ClaudeIPv4();
+if (process.platform === "win32") {
+  app.setAppUserModelId("com.ip-guard.desktop");
+  app.setToastActivatorCLSID("3B1AB47E-04D1-4A2F-969D-3127D6908544");
+}
 const guardian = new Guardian(claude);
 const networkPolicies = new NetworkPolicies();
 const fixedEgress = new FixedEgress(claude, networkPolicies);
@@ -157,7 +161,7 @@ const start = async () => {
       !networkPolicies.applying &&
       snapshot?.ready &&
       needed &&
-      (snapshot.egress || proxyEnhancement.routeActive)
+      (snapshot.egress || (proxyEnhancement.routeActive && proxyEnhancement.sourceReady))
     )
       void proxyEnhancement.exit
         .check(
@@ -191,7 +195,9 @@ const start = async () => {
           ? conflict || proxyEnhancement.state.error || "等待确认 Claude 专用代理通道"
           : !enforcerReady
             ? snapshot.driver.error || "等待内核过滤配置就绪"
-            : proxyEnhancement.exit.state.reason;
+            : proxyEnhancement.state.error
+              ? `${proxyEnhancement.state.error}；${proxyEnhancement.exit.state.reason}`
+              : proxyEnhancement.exit.state.reason;
       const phase = networkPolicies.applying
         ? "checking"
         : routeMissing
@@ -252,6 +258,16 @@ const start = async () => {
     queueMicrotask(() => {
       void updateProxy().catch((error) => console.error("增强出口状态", error));
     });
+  };
+  proxyEnhancement.onDiagnostic = (level, message) => {
+    if (level === "warning" && message.startsWith("专用核心"))
+      protectionAlerts.notifyProxyCoreFailure();
+    else if (level === "info") protectionAlerts.resetProxyCoreFailure();
+    if (guardian.snapshot?.online)
+      void guardian
+        .request("proxy:diagnostic", { level, message })
+        .catch((error) => console.error("代理诊断记录", error));
+    else console.warn(message);
   };
   await updateProxy();
   guardian.start();
@@ -318,8 +334,20 @@ const start = async () => {
     ]),
   );
   tray.on("double-click", show);
-  guardian.on("snapshot", (snapshot) => {
-    tray?.setToolTip(`IP Guard · ${snapshot.ready ? "IPv4 匹配" : snapshot.reason}`.slice(0, 120));
+  guardian.on("snapshot", (snapshot: Snapshot) => {
+    const enhancedRunning = snapshot.apps.some(
+      (target) => target.enhanced && snapshot.running.includes(target.id),
+    );
+    const status = !snapshot.online
+      ? "守护连接已中断"
+      : !snapshot.ready
+        ? `联网已暂停 · ${snapshot.reason}`
+        : enhancedRunning && !snapshot.enhancementReady
+          ? `增强联网已暂停 · ${snapshot.enhancementReason}`
+          : enhancedRunning && proxyEnhancement.state.error
+            ? "增强出口已验证 · 代理来源复核中"
+            : "IPv4 匹配";
+    tray?.setToolTip(`IP Guard · ${status}`.slice(0, 120));
   });
   if (smoke) {
     try {

@@ -100,6 +100,48 @@ describe("enhancement exit proof", () => {
       await pending;
     }
   });
+  it("expires a suspended source's proof at its original deadline and signals the connection gate", async () => {
+    vi.useFakeTimers();
+    const changed = vi.fn(),
+      proof = new EnhancementExit(changed);
+    try {
+      transport.fetch.mockResolvedValueOnce(new Response("当前 IP：8.8.8.8 来自于：测试地区"));
+      await proof.check(["8.8.8.8"], "http://127.0.0.1:38401", true);
+      const checkedAt = proof.state.checkedAt;
+      await vi.advanceTimersByTimeAsync(5000);
+      proof.suspend();
+      await vi.advanceTimersByTimeAsync(9999);
+      expect(proof.ready).toBe(true);
+      expect(proof.state.checkedAt).toBe(checkedAt);
+      changed.mockClear();
+      await vi.advanceTimersByTimeAsync(1);
+      expect(proof.ready).toBe(false);
+      expect(proof.state).toMatchObject({ phase: "failed", checkedAt });
+      expect(changed).toHaveBeenCalledTimes(1);
+    } finally {
+      proof.stop();
+      vi.useRealTimers();
+    }
+  });
+  it("discards a query completed while source discovery is suspended", async () => {
+    const proof = new EnhancementExit(() => undefined);
+    const response = Promise.withResolvers<Response>();
+    try {
+      transport.fetch.mockResolvedValueOnce(new Response("当前 IP：8.8.8.8 来自于：测试地区"));
+      await proof.check(["8.8.8.8"], "http://127.0.0.1:38401", true);
+      const checkedAt = proof.state.checkedAt;
+      transport.fetch.mockReturnValueOnce(response.promise);
+      const pending = proof.check(["8.8.8.8"], "http://127.0.0.1:38401", true);
+      await vi.waitFor(() => expect(transport.fetch).toHaveBeenCalledTimes(2));
+      proof.suspend();
+      response.resolve(new Response("当前 IP：8.8.8.8 来自于：测试地区"));
+      expect(await pending).toBe(false);
+      expect(proof.state.checkedAt).toBe(checkedAt);
+      expect(proof.ready).toBe(true);
+    } finally {
+      proof.stop();
+    }
+  });
   it("revokes an existing proof immediately when the exit IP no longer matches", async () => {
     const proof = new EnhancementExit(() => undefined);
     transport.fetch.mockResolvedValueOnce(new Response("当前 IP：8.8.8.8 来自于：测试地区"));
