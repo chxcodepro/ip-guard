@@ -1,6 +1,6 @@
 {
   "name": "@ip-guard/desktop",
-  "version": "0.15.9",
+  "version": "0.15.10",
   "private": true,
   "description": "Application IPv4 launch gate and managed network guardian",
   "homepage": "https://github.com/chxcodepro/ip-guard",
