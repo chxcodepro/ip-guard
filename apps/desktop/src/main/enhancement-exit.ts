@@ -125,17 +125,19 @@ export class EnhancementExit {
             return matched;
           } catch {
             if (generation !== this.generation || signal.aborted) return false;
-            this.set({
-              phase:
-                attempt < ipv4Attempts
-                  ? ["blocked", "failed"].includes(this.state.phase)
-                    ? this.state.phase
-                    : "checking"
-                  : "failed",
-              checkedAt: new Date().toISOString(),
-              currentIp: "",
-              reason: `增强出口复核 ${attempt}/${ipv4Attempts} 次未取得 IPv4，增强联网已暂停`,
-            });
+            // A same-route retry retains its existing proof only until the original deadline.
+            if (attempt === ipv4Attempts || !this.ready)
+              this.set({
+                phase:
+                  attempt < ipv4Attempts
+                    ? ["blocked", "failed"].includes(this.state.phase)
+                      ? this.state.phase
+                      : "checking"
+                    : "failed",
+                checkedAt: new Date().toISOString(),
+                currentIp: "",
+                reason: `增强出口复核 ${attempt}/${ipv4Attempts} 次未取得 IPv4，增强联网已暂停`,
+              });
             if (attempt < ipv4Attempts) await delay(ipv4RetryDelayMs, undefined, { signal });
           }
         }

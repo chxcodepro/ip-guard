@@ -79,8 +79,8 @@ jobs:
         run: pnpm exec vp run package:desktop
       - name: Check Windows release contracts
         if: matrix.platform == 'windows'
-        run: pnpm exec vp test --project unit packages/electron/src/network-policy.test.ts apps/desktop/src/main/forced-proxy.test.ts apps/desktop/src/main/mihomo-config.test.ts apps/desktop/src/main/http-proxy.test.ts apps/desktop/src/main/renderer-route.test.ts
-      - name: Inspect packaged Windows renderer and native component
+        run: pnpm exec vp test --project unit packages/electron/src/network-policy.test.ts apps/desktop/src/main/forced-proxy.test.ts apps/desktop/src/main/mihomo-config.test.ts apps/desktop/src/main/http-proxy.test.ts apps/desktop/src/main/renderer-route.test.ts apps/desktop/src/main/enhancement-exit.test.ts
+      - name: Verify Windows installer, installed renderer and native component
         if: matrix.platform == 'windows' && hashFiles('apps/desktop/scripts/verify-windows-package.mjs') != ''
         run: node apps/desktop/scripts/verify-windows-package.mjs
       - name: Verify POSIX contracts

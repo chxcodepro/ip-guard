@@ -11,6 +11,7 @@ const transport = vi.hoisted(() => ({
 vi.mock("electron", () => ({ session: { fromPartition: () => transport } }));
 afterEach(() => {
   vi.clearAllMocks();
+  transport.fetch.mockReset();
 });
 describe("enhancement exit proof", () => {
   it("parses only the service IPv4 and checks the allowlist, independent of country", () => {
@@ -36,6 +37,8 @@ describe("enhancement exit proof", () => {
   });
   it("discards a proof completed after the route was invalidated", async () => {
     const proof = new EnhancementExit(() => undefined);
+    transport.fetch.mockResolvedValueOnce(new Response("当前 IP：8.8.8.8 来自于：测试地区"));
+    expect(await proof.check(["8.8.8.8"], "http://127.0.0.1:38401", true)).toBe(true);
     let finish: ((value: Response) => void) | undefined;
     transport.fetch.mockImplementationOnce(
       () =>
@@ -46,10 +49,74 @@ describe("enhancement exit proof", () => {
     const pending = proof.check(["8.8.8.8"], "http://127.0.0.1:38401", true);
     await vi.waitFor(() => expect(finish).toBeTypeOf("function"));
     proof.invalidate();
+    expect(proof.ready).toBe(false);
     if (!finish) throw new Error("Missing pending query");
     finish(new Response("当前 IP：8.8.8.8 来自于：测试地区"));
     expect(await pending).toBe(false);
     expect(proof.ready).toBe(false);
+  });
+  it("keeps an unexpired same-route proof through a temporary lookup failure", async () => {
+    const proof = new EnhancementExit(() => undefined);
+    const clock = vi.spyOn(Date, "now");
+    let pending: Promise<boolean> | undefined;
+    try {
+      transport.fetch.mockResolvedValueOnce(new Response("当前 IP：8.8.8.8 来自于：测试地区"));
+      expect(await proof.check(["8.8.8.8"], "http://127.0.0.1:38401", true)).toBe(true);
+      const checkedAt = proof.state.checkedAt;
+      clock.mockReturnValue(Date.parse(checkedAt) + 5000);
+      transport.fetch.mockRejectedValueOnce(new Error("Temporary IP service timeout"));
+      transport.fetch.mockResolvedValueOnce(new Response("当前 IP：8.8.8.8 来自于：测试地区"));
+      pending = proof.check(["8.8.8.8"], "http://127.0.0.1:38401", true);
+      await vi.waitFor(() => expect(transport.fetch).toHaveBeenCalledTimes(2));
+      expect(proof.ready).toBe(true);
+      expect(proof.state).toMatchObject({ phase: "passed", checkedAt, currentIp: "8.8.8.8" });
+      clock.mockRestore();
+      expect(await pending).toBe(true);
+    } finally {
+      clock.mockRestore();
+      proof.stop();
+      await pending;
+    }
+  });
+  it("does not extend the fifteen-second proof deadline while retrying", async () => {
+    const proof = new EnhancementExit(() => undefined);
+    const clock = vi.spyOn(Date, "now");
+    let pending: Promise<boolean> | undefined;
+    try {
+      transport.fetch.mockResolvedValueOnce(new Response("当前 IP：8.8.8.8 来自于：测试地区"));
+      expect(await proof.check(["8.8.8.8"], "http://127.0.0.1:38401", true)).toBe(true);
+      const verifiedAt = Date.parse(proof.state.checkedAt);
+      clock.mockReturnValue(verifiedAt + 5000);
+      transport.fetch.mockRejectedValueOnce(new Error("Temporary IP service timeout"));
+      pending = proof.check(["8.8.8.8"], "http://127.0.0.1:38401", true);
+      await vi.waitFor(() => expect(transport.fetch).toHaveBeenCalledTimes(2));
+      clock.mockReturnValue(verifiedAt + 14999);
+      expect(proof.ready).toBe(true);
+      clock.mockReturnValue(verifiedAt + 15000);
+      expect(proof.ready).toBe(false);
+    } finally {
+      clock.mockRestore();
+      proof.stop();
+      await pending;
+    }
+  });
+  it("revokes an existing proof immediately when the exit IP no longer matches", async () => {
+    const proof = new EnhancementExit(() => undefined);
+    transport.fetch.mockResolvedValueOnce(new Response("当前 IP：8.8.8.8 来自于：测试地区"));
+    expect(await proof.check(["8.8.8.8"], "http://127.0.0.1:38401", true)).toBe(true);
+    transport.fetch.mockResolvedValueOnce(new Response("当前 IP：1.1.1.1 来自于：测试地区"));
+    expect(await proof.check(["8.8.8.8"], "http://127.0.0.1:38401", true)).toBe(false);
+    expect(proof.ready).toBe(false);
+    expect(proof.state.phase).toBe("blocked");
+  });
+  it("revokes the proof when all lookup attempts fail, even before its deadline", async () => {
+    const proof = new EnhancementExit(() => undefined);
+    transport.fetch.mockResolvedValueOnce(new Response("当前 IP：8.8.8.8 来自于：测试地区"));
+    expect(await proof.check(["8.8.8.8"], "http://127.0.0.1:38401", true)).toBe(true);
+    transport.fetch.mockRejectedValue(new Error("IP service unavailable"));
+    expect(await proof.check(["8.8.8.8"], "http://127.0.0.1:38401", true)).toBe(false);
+    expect(proof.ready).toBe(false);
+    expect(proof.state.phase).toBe("failed");
   });
   it("waits five seconds after a slow query completes before polling again", async () => {
     const proof = new EnhancementExit(() => undefined);

@@ -11,20 +11,28 @@ const root = path.resolve(import.meta.dirname, "../../.."),
   version = JSON.parse(
     await readFile(path.join(root, "apps/desktop/package.json"), "utf8"),
   ).version;
-const packaged = path.join(root, "apps/desktop/release/win-unpacked");
-const native = path.join(packaged, "resources/native", version, "IpGuard.Native.exe");
-const component = JSON.parse(
-  execFileSync(native, ["version"], { encoding: "utf8", windowsHide: true }),
-);
-assert.equal(component.version, version);
 const home = path.join(process.env.RUNNER_TEMP, "ipguard-release-smoke"),
+  installed = path.join(home, "IP Guard"),
   local = path.join(home, "local"),
   roaming = path.join(home, "roaming");
 await mkdir(local, { recursive: true });
 await mkdir(roaming, { recursive: true });
-const child = spawn(path.join(packaged, "IP Guard.exe"), ["--windows-smoke"], {
+const env = { ...process.env, LOCALAPPDATA: local, APPDATA: roaming };
+execFileSync(
+  path.join(root, "apps/desktop/release", `IP-Guard-Setup-${version}.exe`),
+  ["/S", `/D=${installed}`],
+  // NSIS requires the final /D path to remain unquoted, including spaces.
+  { env, windowsHide: true, windowsVerbatimArguments: true, timeout: 120000, stdio: "inherit" },
+);
+console.log("PASS Windows installer exit code 0 " + version);
+const native = path.join(installed, "resources/native", version, "IpGuard.Native.exe");
+const component = JSON.parse(
+  execFileSync(native, ["version"], { encoding: "utf8", windowsHide: true }),
+);
+assert.equal(component.version, version);
+const child = spawn(path.join(installed, "IP Guard.exe"), ["--windows-smoke"], {
   cwd: root,
-  env: { ...process.env, LOCALAPPDATA: local, APPDATA: roaming },
+  env,
   windowsHide: true,
   stdio: ["ignore", "pipe", "pipe"],
 });
@@ -40,7 +48,7 @@ try {
   );
   assert.equal(result.nativeVersion, version);
   assert.equal(result.online, true);
-  console.log("PASS packaged Windows renderer and native handshake " + version);
+  console.log("PASS installed Windows renderer and native handshake " + version);
 } finally {
   clearTimeout(timer);
   if (child.exitCode === null) child.kill();
